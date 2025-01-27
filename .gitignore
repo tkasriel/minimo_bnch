@@ -1,3 +1,9 @@
 bump-release.sh
 release-list.txt
 environment/target
+*.pyc
+*.log
+*.json
+*.pt
+learning/outputs/
+outputs/

@@ -2,11 +2,11 @@ task: proofsearch
 
 problemset: natural-number-game
 
-max_problems: 1000
+max_problems: 500
 accumulate_library: false
 
 agent:
-    max_mcts_nodes: 50000
+    max_mcts_nodes: 500
 
 defaults:
     - _self_

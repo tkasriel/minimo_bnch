@@ -3,7 +3,7 @@
 type: mcts
 
 node_type: vanilla
-max_mcts_nodes: 50000
+max_mcts_nodes: 500
 expansions: 50000
 max_searches: 1
 max_examples: 50

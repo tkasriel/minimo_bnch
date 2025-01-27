@@ -1,9 +1,9 @@
-= : [('t : type) -> 't -> 't -> prop].
-
+= : [nat -> nat -> prop].
 nat : type.
 
 z : nat.
 s : [nat -> nat].
+o : nat = (s z).
 
 + : [nat -> nat -> nat].
 * : [nat -> nat -> nat].

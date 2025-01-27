@@ -112,7 +112,7 @@ async def teacher_loop(cfg: DictConfig):
             conjectures = []
 
             while len(conjectures) < cfg.n_conjectures:
-                proposal = sample_conjecture(AgentLM(agent, 'Conj:(hard) '), context)
+                proposal = sample_conjecture(AgentLM(agent, 'Conj:(hard,useful,few_zeros) '), context)
 
                 if proposal and proposal not in conjectures + proven_conjectures:
                     # Contract conjectures to make them Peano-parseable.
@@ -212,7 +212,11 @@ async def teacher_loop(cfg: DictConfig):
                     outcome = FAIL
 
                 if not cfg.get('freeze_conjecturer', False):
-                    examples.append(f'Conj:({outcome}) ' + d.elaborate(student_result.problem))
+                    # print(student_result.problem)
+                    tags = [outcome]
+                    if ": nat" in student_result.problem: tags.append("useful")
+                    if student_result.count("z") < 3: tags.append("few_zeros")
+                    examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
 
                 if student_result.success:
                     proven_conjectures.append(student_result.problem)
@@ -228,7 +232,10 @@ async def teacher_loop(cfg: DictConfig):
                                            if h.logprob <= thresholds[i] or i + 1 == len(difficulty_buckets))
 
                             if not cfg.get('freeze_conjecturer', False):
-                                examples.append(f'Conj:({outcome}) ' + d.elaborate(student_result.problem))
+                                tags = [outcome]
+                                if ": nat" in student_result.problem: tags.append("useful")
+                                if student_result.count("z") < 3: tags.append("few_zeros")
+                                examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
                             examples.extend(h.examples)
                             seen_hindsight_goals.add(h.goal)
 
