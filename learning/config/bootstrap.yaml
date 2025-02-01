@@ -6,7 +6,7 @@ defaults:
     - theory: propositional-logic
 
 iterations: 5
-n_conjectures: 20
+n_conjectures: 200
 
 difficulty_buckets:
     - hard: 20

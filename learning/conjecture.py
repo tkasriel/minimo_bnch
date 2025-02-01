@@ -20,7 +20,7 @@ from util import batch_inference
 # Arrow := "[" decl* Prop "]"
 
 
-ALLOW_PROP_AS_TYPE = True
+ALLOW_PROP_AS_TYPE = False
 
 
 @dataclass
@@ -413,6 +413,7 @@ def sample_conjecture(lm, context, max_it=100):
             generation += choice
             # Filter completions to those starting with the chosen character and drop the character.
             completions = [c[1:] for c in completions if c.startswith(choice)]
+            # print(generation)
 
     return None
 

@@ -1107,10 +1107,12 @@ def visualize_search_tree(root, path, min_visits=0):
 
 
 def run_proof_search_agent(config):
-    if config.get('agent_path'):
-        print('Loading from checkpoint', config.agent_path)
-        agent = torch.load(config.agent_path)
-        begin = config.skip
+    # print()
+    agent_path = "/Users/tkasriel/code/rsh/minimo/learning/outputs/2025-01-29/22-35-10/4.pt"
+    if agent_path:
+        print('Loading from checkpoint', agent_path)
+        agent = torch.load(agent_path)
+        begin = 0#config.skip
         print('Begin =', begin)
     else:
         agent = ProofSearchAgent(config.agent)
@@ -1132,7 +1134,7 @@ def run_proof_search_agent(config):
             wandb.log({'success': int(result.success)})
 
             if result.success:
-                problemset.mark_as_solved(problem, add_to_library=config.accumulate_library)
+                problemset.mark_as_solved(problem, add_to_library=True)
 
             wandb.log({'cumm_pass_rate': problemset.cumulative_pass_rate()})
             wandb.log({'train_progress': (i + 1) / config.max_problems})

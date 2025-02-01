@@ -15,6 +15,7 @@ import numpy as np
 from tqdm import tqdm
 
 import peano
+from problems import load_natural_number_game_problemset
 import worker
 from worker import StudentResult  # noqa
 from hindsight import HindsightExample  # noqa
@@ -70,6 +71,7 @@ async def teacher_loop(cfg: DictConfig):
 
     continue_dir = cfg.get('continue')
     start_iteration = 0
+    continue_dir = "/Users/tkasriel/code/rsh/minimo/learning/outputs/2025-01-28/12-49-46"
 
     if continue_dir is not None:
         os.chdir(continue_dir)
@@ -100,28 +102,35 @@ async def teacher_loop(cfg: DictConfig):
 
 
     with open('log.jsonl', 'w') as log:
-        for i in range(start_iteration, cfg.iterations):
+        for i in range(start_iteration, cfg.iterations + 1):
+            i = 5
             torch.save(agent, f'{i}.pt')
+            if i == cfg.iterations:
+                print('test')
+                conjectures = [x[1] for x in load_natural_number_game_problemset()._statements.values()]
+            else:
+                context = Context(d, None, [])
+                # 1- Run conjecturing model to obtain N conjectures.
+                print(now(), f'Iteration #{i}: making conjectures...')
 
-            context = Context(d, None, [])
-            # 1- Run conjecturing model to obtain N conjectures.
-            print(now(), f'Iteration #{i}: making conjectures...')
+                progress_bar = tqdm(total=cfg.n_conjectures)
 
-            progress_bar = tqdm(total=cfg.n_conjectures)
+                conjectures = []
 
-            conjectures = []
+                while len(conjectures) < cfg.n_conjectures:
+                    # print("sub proposal")
+                    proposal = sample_conjecture(AgentLM(agent, 'Conj:(hard,useful,few_zeros) '), context)
+                    # print(proposal)
 
-            while len(conjectures) < cfg.n_conjectures:
-                proposal = sample_conjecture(AgentLM(agent, 'Conj:(hard,useful,few_zeros) '), context)
+                    if proposal and proposal not in conjectures + proven_conjectures:
+                        # Contract conjectures to make them Peano-parseable.
+                        contracted_proposal = d.contract(proposal)
+                        if contracted_proposal not in conjectures + proven_conjectures:
+                            conjectures.append(contracted_proposal)
+                            progress_bar.update(1)
+                    # print("prop fini")
 
-                if proposal and proposal not in conjectures + proven_conjectures:
-                    # Contract conjectures to make them Peano-parseable.
-                    contracted_proposal = d.contract(proposal)
-                    if contracted_proposal not in conjectures + proven_conjectures:
-                        conjectures.append(contracted_proposal)
-                        progress_bar.update(1)
-
-            progress_bar.close()
+                progress_bar.close()
 
 
             print(now(), 'done, have', len(conjectures), 'conjectures')
@@ -215,7 +224,7 @@ async def teacher_loop(cfg: DictConfig):
                     # print(student_result.problem)
                     tags = [outcome]
                     if ": nat" in student_result.problem: tags.append("useful")
-                    if student_result.count("z") < 3: tags.append("few_zeros")
+                    if student_result.problem.count("z") < 3: tags.append("few_zeros")
                     examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
 
                 if student_result.success:
@@ -234,7 +243,7 @@ async def teacher_loop(cfg: DictConfig):
                             if not cfg.get('freeze_conjecturer', False):
                                 tags = [outcome]
                                 if ": nat" in student_result.problem: tags.append("useful")
-                                if student_result.count("z") < 3: tags.append("few_zeros")
+                                if student_result.problem.count("z") < 3: tags.append("few_zeros")
                                 examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
                             examples.extend(h.examples)
                             seen_hindsight_goals.add(h.goal)
