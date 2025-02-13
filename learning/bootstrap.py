@@ -96,10 +96,10 @@ async def teacher_loop(cfg: DictConfig):
 
 
     with open('log.jsonl', 'w') as log:
-        for i in range(start_iteration, cfg.iterations + 4):
+        for i in range(start_iteration, cfg.iterations):
             torch.save(agent, f'{i}.pt')
             print(f"current it: {i}")
-            if i == cfg.iterations:
+            if i == 0:#cfg.iterations:
                 # agent._max_mcts_nodes = 1000
                 conjectures = [x[1] for x in load_natural_number_game_problemset()._statements.values()]
 
@@ -157,7 +157,7 @@ async def teacher_loop(cfg: DictConfig):
                     agent,
                     worker.BackgroundTheory(theory, premises),
                     conjecture)
-                if i == cfg.iterations:
+                if i == 0:
                     student_result = get_task_result(task)
                     student_results.append(student_result)
 
@@ -199,7 +199,7 @@ async def teacher_loop(cfg: DictConfig):
                     tasks.append(task)
 
             # 3- Train model on proofs and outcome of conjectures (easy, hard, timeout)
-            if i < cfg.iterations:
+            if i > 0:
                 print('Collecting', len(tasks), 'results from workers.')
                 student_results = []
                 for task in tqdm(tasks, miniters=1):
@@ -293,7 +293,7 @@ async def teacher_loop(cfg: DictConfig):
                 log.write('\n')
 
                 # 3c- Train model on conjecturing and proof search examples.
-                if i + 1 < cfg.iterations:
+                if i > 0:
                     print(len(examples), 'accumulated training examples.')
                     agent.train(examples)
 
