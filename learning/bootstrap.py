@@ -35,7 +35,7 @@ DISTRIBUTED = os.environ.get('DISTRIBUTED', False)
 
 
 def submit_task(agent: ProofSearchAgent, theory: worker.BackgroundTheory, statement: str):
-    worker.try_prove(agent, theory, statement)
+    return worker.try_prove(agent, theory, statement)
 
 
 def get_task_result(task):
@@ -46,7 +46,7 @@ async def teacher_loop(cfg: DictConfig):
     print('Running in', 'distributed mode.' if DISTRIBUTED else 'single-process mode.')
 
     agent = make_agent(cfg)
-    os.chdir("/Users/tkasriel/code/rsh/minimo")
+    # os.chdir("~/minimo")
     with open(os.path.join(os.path.dirname(__file__), 'theories', cfg.theory.name + '.p')) as f:
         theory = f.read()
 
@@ -96,11 +96,10 @@ async def teacher_loop(cfg: DictConfig):
 
 
     with open('log.jsonl', 'w') as log:
-        for i in range(start_iteration, cfg.iterations + 1):
-            i = 5
+        for i in range(start_iteration, cfg.iterations + 4):
             torch.save(agent, f'{i}.pt')
+            print(f"current it: {i}")
             if i == cfg.iterations:
-                print('test')
                 # agent._max_mcts_nodes = 1000
                 conjectures = [x[1] for x in load_natural_number_game_problemset()._statements.values()]
 
@@ -216,78 +215,78 @@ async def teacher_loop(cfg: DictConfig):
 
                 success_logprobs = []
 
-                # 3a- Look at all the success logprobs and compute the easy/hard threhsold.
-                for student_result in student_results:
-                    if student_result.success:
-                        success_logprobs.append(student_result.logprob)
+            # 3a- Look at all the success logprobs and compute the easy/hard threhsold.
+            for student_result in student_results:
+                if student_result.success:
+                    success_logprobs.append(student_result.logprob)
 
+                outcomes.append({'iteration': i,
+                                'problem': student_result.problem,
+                                'proof': student_result.proof,
+                                'logprob': student_result.logprob,
+                                'actions': student_result.solution_actions,
+                                'hindsight': False
+                                })
+
+                for h in student_result.hindsight_examples:
                     outcomes.append({'iteration': i,
-                                    'problem': student_result.problem,
-                                    'proof': student_result.proof,
-                                    'logprob': student_result.logprob,
-                                    'actions': student_result.solution_actions,
-                                    'hindsight': False
+                                    'problem': h.statement,
+                                    'proof': h.proof,
+                                    'logprob': h.logprob,
+                                    'actions': h.solution_actions,
+                                    'hindsight': True
                                     })
 
+            if not success_logprobs:
+                print(f'No solutions found in iteration {i} - stopping learning loop...')
+                break
+
+            thresholds = [np.percentile(success_logprobs, p)
+                        for _, p in difficulty_buckets]
+
+            print('Thresholds:',
+                list(zip([k for k, _ in difficulty_buckets], thresholds)),
+                'min =', np.min(success_logprobs),
+                'max =', np.max(success_logprobs))
+
+            # 3b- Classify problems into easy/hard.
+            for student_result in student_results:
+                # Outcome is the name of the first difficulty bucket that is larger than the logprob.
+                if student_result.success:
+                    outcome = next(k
+                                for i, (k, _) in enumerate(difficulty_buckets)
+                                if (student_result.logprob <= thresholds[i] or
+                                    i + 1 == len(difficulty_buckets)))
+                else:
+                    outcome = FAIL
+
+                if not cfg.get('freeze_conjecturer', False):
+                    # print(student_result.problem)
+                    tags = [outcome]
+                    if ": nat" in student_result.problem: tags.append("useful")
+                    if student_result.problem.count("z") < 3: tags.append("few_zeros")
+                    examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
+
+                if student_result.success:
+                    proven_conjectures.append(student_result.problem)
+                    proofs.append(student_result.proof)
+
+                examples.extend(student_result.extracted_examples)
+
+                if cfg.train_policy_on_hindsight_examples:
                     for h in student_result.hindsight_examples:
-                        outcomes.append({'iteration': i,
-                                        'problem': h.statement,
-                                        'proof': h.proof,
-                                        'logprob': h.logprob,
-                                        'actions': h.solution_actions,
-                                        'hindsight': True
-                                        })
+                        if h.goal not in seen_hindsight_goals:
+                            outcome = next(k
+                                        for i, (k, _) in enumerate(difficulty_buckets)
+                                        if h.logprob <= thresholds[i] or i + 1 == len(difficulty_buckets))
 
-                if not success_logprobs:
-                    print(f'No solutions found in iteration {i} - stopping learning loop...')
-                    break
-
-                thresholds = [np.percentile(success_logprobs, p)
-                            for _, p in difficulty_buckets]
-
-                print('Thresholds:',
-                    list(zip([k for k, _ in difficulty_buckets], thresholds)),
-                    'min =', np.min(success_logprobs),
-                    'max =', np.max(success_logprobs))
-
-                # 3b- Classify problems into easy/hard.
-                for student_result in student_results:
-                    # Outcome is the name of the first difficulty bucket that is larger than the logprob.
-                    if student_result.success:
-                        outcome = next(k
-                                    for i, (k, _) in enumerate(difficulty_buckets)
-                                    if (student_result.logprob <= thresholds[i] or
-                                        i + 1 == len(difficulty_buckets)))
-                    else:
-                        outcome = FAIL
-
-                    if not cfg.get('freeze_conjecturer', False):
-                        # print(student_result.problem)
-                        tags = [outcome]
-                        if ": nat" in student_result.problem: tags.append("useful")
-                        if student_result.problem.count("z") < 3: tags.append("few_zeros")
-                        examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
-
-                    if student_result.success:
-                        proven_conjectures.append(student_result.problem)
-                        proofs.append(student_result.proof)
-
-                    examples.extend(student_result.extracted_examples)
-
-                    if cfg.train_policy_on_hindsight_examples:
-                        for h in student_result.hindsight_examples:
-                            if h.goal not in seen_hindsight_goals:
-                                outcome = next(k
-                                            for i, (k, _) in enumerate(difficulty_buckets)
-                                            if h.logprob <= thresholds[i] or i + 1 == len(difficulty_buckets))
-
-                                if not cfg.get('freeze_conjecturer', False):
-                                    tags = [outcome]
-                                    if ": nat" in student_result.problem: tags.append("useful")
-                                    if student_result.problem.count("z") < 3: tags.append("few_zeros")
-                                    examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
-                                examples.extend(h.examples)
-                                seen_hindsight_goals.add(h.goal)
+                            if not cfg.get('freeze_conjecturer', False):
+                                tags = [outcome]
+                                if ": nat" in student_result.problem: tags.append("useful")
+                                if student_result.problem.count("z") < 3: tags.append("few_zeros")
+                                examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
+                            examples.extend(h.examples)
+                            seen_hindsight_goals.add(h.goal)
 
                 log.write(json.dumps({'iteration': i,
                                     'msg': f'Training on {len(examples)} examples.'}))
