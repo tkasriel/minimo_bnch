@@ -293,7 +293,7 @@ async def teacher_loop(cfg: DictConfig):
                 log.write('\n')
 
                 # 3c- Train model on conjecturing and proof search examples.
-                if i + 1 < cfg.iterations:
+                if i + 1 < cfg.iterations + 4:
                     print(len(examples), 'accumulated training examples.')
                     agent.train(examples)
 
