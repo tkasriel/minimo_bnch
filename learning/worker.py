@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import gc
 import io
 from dataclasses import dataclass
 from typing import Optional
@@ -38,13 +39,13 @@ redis_url = f'redis://{os.environ.get("REDIS", "localhost")}'
 app = Celery('worker', backend=redis_url, broker=redis_url)
 app.conf.task_serializer = 'pickle'
 app.conf.result_serializer = 'pickle'
+app.conf.worker_max_tasks_per_child = 10
+app.conf.worker_max_memory_per_child = 1e9
 app.conf.accept_content = ['application/json', 'application/x-python-serialize']
 
 
-@app.task
-def try_prove(agent_dump: bytes, theory: BackgroundTheory, statement: str) -> StudentResult:
-    with io.BytesIO(agent_dump) as f:
-        agent = torch.load(f)
+def try_prove(agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, statement: str) -> StudentResult:
+    print(f"worker, curr allocated (init): {torch.cuda.memory_allocated()}")
 
     print('Proving', statement, 'on', agent._policy._lm._lm.device)
 
@@ -72,6 +73,9 @@ def try_prove(agent_dump: bytes, theory: BackgroundTheory, statement: str) -> St
                 theory.theory,
                 theory.premises,
                 agent._policy)
+        # print(f"worker, curr allocated (pre-del): {torch.cuda.memory_allocated()}")
+        # print(f"worker, curr allocated (post-del): {torch.cuda.memory_allocated()}")
+
 
         return StudentResult(
             None,
@@ -85,6 +89,8 @@ def try_prove(agent_dump: bytes, theory: BackgroundTheory, statement: str) -> St
             logprob,
         )
     except BaseException as e:
+        if type(e) == KeyboardInterrupt:
+            raise KeyboardInterrupt()
         tb = traceback.format_exception(e)
         print('Error in try_prove!')
         print(tb)
