@@ -7,3 +7,4 @@ environment/target
 *.pt
 learning/outputs/
 outputs/
+.vscode/
