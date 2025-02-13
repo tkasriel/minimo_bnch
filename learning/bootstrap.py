@@ -265,7 +265,10 @@ async def teacher_loop(cfg: DictConfig):
                     tags = [outcome]
                     if ": nat" in student_result.problem: tags.append("useful")
                     if student_result.problem.count("z") < 3: tags.append("few_zeros")
-                    examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
+                    try:
+                        examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
+                    except BaseException:
+                        pass
 
                 if student_result.success:
                     proven_conjectures.append(student_result.problem)
@@ -284,7 +287,10 @@ async def teacher_loop(cfg: DictConfig):
                                 tags = [outcome]
                                 if ": nat" in student_result.problem: tags.append("useful")
                                 if student_result.problem.count("z") < 3: tags.append("few_zeros")
-                                examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
+                                try:
+                                    examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
+                                except BaseException:
+                                    pass
                             examples.extend(h.examples)
                             seen_hindsight_goals.add(h.goal)
 
