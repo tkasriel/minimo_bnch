@@ -102,6 +102,18 @@ async def teacher_loop(cfg: DictConfig):
             if i == cfg.iterations:
                 # agent._max_mcts_nodes = 1000
                 conjectures = [x[1] for x in load_natural_number_game_problemset()._statements.values()]
+                # for conj in conjectures:
+                #     print(conj)
+                #     try:
+                #         print(d.elaborate(conj))
+                #         print()
+                #     except BaseException as e:
+                #         print("err")
+                #         print()
+                #         continue
+                # print(type(conjectures[0]))
+                # print(conjectures)
+                # return 0
 
                 # premises = ['eq_symm', 'eq_refl', 'rewrite', 'nat_ind', '+_z', '+_s'] #+ ['a_add_assoc', 'a_add_comm'] + ['a_zero_add', 'a_succ_add']
                 premises = ListConfig(['eq_symm', 'eq_refl', 'rewrite', 'nat_ind', '+_z', '+_s'])
@@ -265,7 +277,10 @@ async def teacher_loop(cfg: DictConfig):
                     tags = [outcome]
                     if ": nat" in student_result.problem: tags.append("useful")
                     if student_result.problem.count("z") < 3: tags.append("few_zeros")
-                    examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
+                    try:
+                        examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
+                    except BaseException: # wtf is this
+                        pass
 
                 if student_result.success:
                     proven_conjectures.append(student_result.problem)
@@ -284,7 +299,10 @@ async def teacher_loop(cfg: DictConfig):
                                 tags = [outcome]
                                 if ": nat" in student_result.problem: tags.append("useful")
                                 if student_result.problem.count("z") < 3: tags.append("few_zeros")
-                                examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
+                                try:
+                                    examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
+                                except BaseException:
+                                    pass
                             examples.extend(h.examples)
                             seen_hindsight_goals.add(h.goal)
 
