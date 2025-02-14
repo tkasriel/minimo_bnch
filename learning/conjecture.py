@@ -374,7 +374,7 @@ MAX_OPEN_PARENS = 8
 def sample_conjecture(lm, context, max_it=100):
     generation = ''
 
-    for _ in range(max_it):
+    for iter in range(max_it):
         tokens = tokenize(generation)
         node, _, completions = Conjecture.parse(tokens, context.clone())
 
@@ -393,7 +393,7 @@ def sample_conjecture(lm, context, max_it=100):
                 # print('Dead end in conjecturing:', generation)
                 break
 
-            for l in range(0, len(completions[0])):
+            for l in range(1, len(completions[0])+1):
                 if all(c.startswith(completions[0][:l]) for c in completions):
                     max_common_prefix_len = l
                 else:
@@ -414,7 +414,6 @@ def sample_conjecture(lm, context, max_it=100):
             # Filter completions to those starting with the chosen character and drop the character.
             completions = [c[1:] for c in completions if c.startswith(choice)]
             # print(generation)
-
     return None
 
 def conjecture_logprob_under_lm(lm, context, conjecture, mean=False):

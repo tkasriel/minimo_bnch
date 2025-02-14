@@ -46,8 +46,11 @@ async def teacher_loop(cfg: DictConfig):
     print('Running in', 'distributed mode.' if DISTRIBUTED else 'single-process mode.')
 
     agent = make_agent(cfg)
-    # os.chdir("~/minimo")
-    with open(os.path.join(os.path.dirname(__file__), 'theories', cfg.theory.name + '.p')) as f:
+    
+    pre = ""
+    if "outputs" in os.getcwd():
+        pre = "../../.."
+    with open(os.path.join(pre, os.path.dirname(__file__), 'theories', cfg.theory.name + '.p')) as f:
         theory = f.read()
 
     difficulty_buckets = sorted([list(cfg.difficulty_buckets[i].items())[0]
@@ -111,11 +114,11 @@ async def teacher_loop(cfg: DictConfig):
                 # 1- Run conjecturing model to obtain N conjectures.
                 print(now(), f'Iteration #{i}: making conjectures...')
 
-                progress_bar = tqdm(total=cfg.n_conjectures)
+                progress_bar = tqdm(total=i * cfg.n_conjectures // cfg.iterations:)
 
                 conjectures = []
 
-                while len(conjectures) < cfg.n_conjectures:
+                while len(conjectures) < i * cfg.n_conjectures // cfg.iterations:
                     # print("sub proposal")
                     proposal = sample_conjecture(AgentLM(agent, 'Conj:(hard,useful,few_zeros) '), context)
                     # print(proposal)
