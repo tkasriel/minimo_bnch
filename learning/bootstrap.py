@@ -100,22 +100,7 @@ async def teacher_loop(cfg: DictConfig):
             torch.save(agent, f'{i}.pt')
             print(f"current it: {i}")
             if i == cfg.iterations:
-                # agent._max_mcts_nodes = 1000
                 conjectures = [x[1] for x in load_natural_number_game_problemset()._statements.values()]
-                # for conj in conjectures:
-                #     print(conj)
-                #     try:
-                #         print(d.elaborate(conj))
-                #         print()
-                #     except BaseException as e:
-                #         print("err")
-                #         print()
-                #         continue
-                # print(type(conjectures[0]))
-                # print(conjectures)
-                # return 0
-
-                # premises = ['eq_symm', 'eq_refl', 'rewrite', 'nat_ind', '+_z', '+_s'] #+ ['a_add_assoc', 'a_add_comm'] + ['a_zero_add', 'a_succ_add']
                 premises = ListConfig(['eq_symm', 'eq_refl', 'rewrite', 'nat_ind', '+_z', '+_s'])
                 # premises.extend()
             else:
@@ -205,8 +190,6 @@ async def teacher_loop(cfg: DictConfig):
                     save_json(examples, f'examples_{i}_{index}.json')
                     save_json(outcomes, f'outcomes_{i}_{index}.json')
                     agent.train(examples)
-                    
-                    
                 else:
                     tasks.append(task)
 
@@ -248,10 +231,11 @@ async def teacher_loop(cfg: DictConfig):
                                     'actions': h.solution_actions,
                                     'hindsight': True
                                     })
+            save_json(outcomes, f'outcomes_{i}.json')
 
             if not success_logprobs:
-                print(f'No solutions found in iteration {i} - stopping learning loop...')
-                break
+                print(f'No solutions found in iteration {i}...')
+            #     break
 
             thresholds = [np.percentile(success_logprobs, p)
                         for _, p in difficulty_buckets]
@@ -316,7 +300,6 @@ async def teacher_loop(cfg: DictConfig):
                     agent.train(examples)
 
             save_json(examples, f'examples_{i}.json')
-            save_json(outcomes, f'outcomes_{i}.json')
             torch.save(student_results, f'results_{i}.json')
 
 
