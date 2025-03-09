@@ -119,7 +119,7 @@ async def teacher_loop(cfg: DictConfig):
             conjectures: list[str] = []
 
             while len(conjectures) < cfg.n_conjectures:
-                proposal = sample_conjecture(AgentLM(agent, 'Conj:(hard,useful,few_zeros) '), context)
+                proposal = sample_conjecture(AgentLM(agent, 'Conj:(hard,useful) '), context)
 
                 if proposal and proposal not in conjectures + proven_conjectures:
                     # Contract conjectures to make them Peano-parseable.
@@ -296,8 +296,8 @@ async def teacher_loop(cfg: DictConfig):
 
                             if not cfg.get('freeze_conjecturer', False):
                                 tags = [outcome]
-                                if ": nat" in student_result.problem: tags.append("useful")
-                                if student_result.problem.count("z") < 3: tags.append("few_zeros")
+                                # if ": nat" in student_result.problem: tags.append("useful")
+                                # if student_result.problem.count("z") < 3: tags.append("few_zeros")
                                 examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
                             examples.extend(h.examples)
                             seen_hindsight_goals.add(h.goal)
