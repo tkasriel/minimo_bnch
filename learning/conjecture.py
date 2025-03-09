@@ -22,6 +22,18 @@ from util import batch_inference
 
 ALLOW_PROP_AS_TYPE = False
 
+@dataclass
+class UsefulConjecture:
+    theorem: str
+    iter_generated: int
+    freq_used: int
+    
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "theorem": self.theorem,
+            "iter_generated": str(self.iter_generated),
+            "freq_used": str(self.freq_used),
+        }
 
 @dataclass
 class Context:
@@ -371,7 +383,7 @@ def pretty_print_conjecture(conjecture: str) -> str:
 
 MAX_OPEN_PARENS = 8
 
-def sample_conjecture(lm, context, max_it=100):
+def sample_conjecture(lm, context: Context, max_it=100) -> str | None:
     generation = ''
 
     for _ in range(max_it):

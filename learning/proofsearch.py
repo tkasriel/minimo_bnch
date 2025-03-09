@@ -1108,12 +1108,10 @@ def visualize_search_tree(root, path, min_visits=0):
 
 def run_proof_search_agent(config):
     # print()
-    agent_path = "/Users/tkasriel/code/rsh/minimo/learning/outputs/2025-01-29/22-35-10/4.pt"
-    if agent_path:
-        print('Loading from checkpoint', agent_path)
-        agent = torch.load(agent_path)
-        begin = 0#config.skip
-        print('Begin =', begin)
+    if config.get('agent_path'):
+        print('Loading from checkpoint', config.agent_path)
+        agent = torch.load(config.agent_path)
+        begin = config.skip
     else:
         agent = ProofSearchAgent(config.agent)
         begin = 0
