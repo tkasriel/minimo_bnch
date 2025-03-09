@@ -80,9 +80,16 @@ async def teacher_loop(cfg: DictConfig):
         while os.path.exists(f'{i}.pt'):
             i += 1
         i -= 1
-        start_iteration = i
-        agent = torch.load(f'{i}.pt')
-        print('Loaded agent from', f'{i}.pt')
+        if os.path.exists(f"{i}.5.pt"):
+            agent = torch.load(f'{i}.5.pt')
+            start_iteration = i + 1
+            with open(f"examples_{i}.json") as f:
+                examples = json.load(f)
+                agent.train(examples)
+        else:
+            start_iteration = i
+            agent = torch.load(f'{i}.pt')
+            print('Loaded agent from', f'{i}.pt')
         # Load examples and outcomes.
         if i > 0:
             with open(f'outcomes_{i-1}.json', 'r') as f:
@@ -155,7 +162,7 @@ async def teacher_loop(cfg: DictConfig):
             for index, conjecture in enumerate(tqdm(conjectures, miniters=1)):
                 task = submit_task(
                     agent,
-                    worker.BackgroundTheory(theory, premises),
+                    worker.BackgroundTheory(theory + "\n\n" + "\n\n".join([thm.theorem for thm in useful_theorems]), premises + [thm.theorem.split(" : ")[0] for thm in useful_theorems]),
                     conjecture)
                 # if i == cfg.iterations:
                 #     student_result = get_task_result(task)
@@ -305,16 +312,17 @@ async def teacher_loop(cfg: DictConfig):
             # Finally, we add our generated and proven theorems into our useful theorems pile
 
             # 3c- Train model on conjecturing and proof search examples.
-            print(len(examples), 'accumulated training examples.')
-            log.write(json.dumps({'iteration': i,
-                                    'msg': f'Training on {len(examples)} examples.'}))
+            
             log.write('\n')
-            agent.train(examples)
-
+            torch.save(agent, f"{i}.5.pt")
             save_json([thm.to_dict() for thm in useful_theorems], f"generated_theorems_{i}.json")
             save_json(examples, f'examples_{i}.json')
             save_json(outcomes, f'outcomes_{i}.json')
+            print(len(examples), 'accumulated training examples.')
+            log.write(json.dumps({'iteration': i,
+                                    'msg': f'Training on {len(examples)} examples.'}))
             torch.save(student_results, f'results_{i}.json')
+            agent.train(examples)
 
 
 @hydra.main(version_base="1.2", config_path="config", config_name="bootstrap")
