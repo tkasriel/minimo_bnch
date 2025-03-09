@@ -311,6 +311,7 @@ async def teacher_loop(cfg: DictConfig):
             log.write('\n')
             agent.train(examples)
 
+            save_json([thm.to_dict() for thm in useful_theorems], f"generated_theorems_{i}.json")
             save_json(examples, f'examples_{i}.json')
             save_json(outcomes, f'outcomes_{i}.json')
             torch.save(student_results, f'results_{i}.json')
