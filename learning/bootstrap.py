@@ -96,39 +96,31 @@ async def teacher_loop(cfg: DictConfig):
 
 
     with open('log.jsonl', 'w') as log:
-        for i in range(start_iteration, cfg.iterations + 4):
+        for i in range(start_iteration, cfg.iterations):
             torch.save(agent, f'{i}.pt')
             print(f"current it: {i}")
-            if i == cfg.iterations:
-                # agent._max_mcts_nodes = 1000
-                conjectures = [x[1] for x in load_natural_number_game_problemset()._statements.values()]
+            context = Context(d, None, [])
+            # 1- Run conjecturing model to obtain N conjectures.
+            print(now(), f'Iteration #{i}: making conjectures...')
 
-                # premises = ['eq_symm', 'eq_refl', 'rewrite', 'nat_ind', '+_z', '+_s'] #+ ['a_add_assoc', 'a_add_comm'] + ['a_zero_add', 'a_succ_add']
-                premises = ListConfig(['eq_symm', 'eq_refl', 'rewrite', 'nat_ind', '+_z', '+_s'])
-                # premises.extend()
-            else:
-                context = Context(d, None, [])
-                # 1- Run conjecturing model to obtain N conjectures.
-                print(now(), f'Iteration #{i}: making conjectures...')
+            progress_bar = tqdm(total=cfg.n_conjectures)
 
-                progress_bar = tqdm(total=cfg.n_conjectures)
+            conjectures = []
 
-                conjectures = []
+            while len(conjectures) < cfg.n_conjectures:
+                # print("sub proposal")
+                proposal = sample_conjecture(AgentLM(agent, 'Conj:(hard,useful,few_zeros) '), context)
+                # print(proposal)
 
-                while len(conjectures) < cfg.n_conjectures:
-                    # print("sub proposal")
-                    proposal = sample_conjecture(AgentLM(agent, 'Conj:(hard,useful,few_zeros) '), context)
-                    # print(proposal)
+                if proposal and proposal not in conjectures + proven_conjectures:
+                    # Contract conjectures to make them Peano-parseable.
+                    contracted_proposal = d.contract(proposal)
+                    if contracted_proposal not in conjectures + proven_conjectures:
+                        conjectures.append(contracted_proposal)
+                        progress_bar.update(1)
+                # print("prop fini")
 
-                    if proposal and proposal not in conjectures + proven_conjectures:
-                        # Contract conjectures to make them Peano-parseable.
-                        contracted_proposal = d.contract(proposal)
-                        if contracted_proposal not in conjectures + proven_conjectures:
-                            conjectures.append(contracted_proposal)
-                            progress_bar.update(1)
-                    # print("prop fini")
-
-                progress_bar.close()
+            progress_bar.close()
 
 
             print(now(), 'done, have', len(conjectures), 'conjectures')
@@ -152,68 +144,29 @@ async def teacher_loop(cfg: DictConfig):
             print('Submitting tasks...')
             success_logprobs = []
             examples = []
+            background_theory = worker.BackgroundTheory(theory, premises)
             for index, conjecture in enumerate(tqdm(conjectures, miniters=1)):
                 task = submit_task(
                     agent,
-                    worker.BackgroundTheory(theory, premises),
+                    background_theory,
                     conjecture)
-                if i == cfg.iterations:
-                    student_result = get_task_result(task)
-                    student_results.append(student_result)
-
-                    if student_result.error:
-                        print('Error in prover process!')
-                        print(student_result.error)
-                        continue
-                    if student_result.success:
-                        success_logprobs.append(student_result.logprob)
-
-                    outcomes.append({'iteration': i,
-                                    'problem': student_result.problem,
-                                    'proof': student_result.proof,
-                                    'logprob': student_result.logprob,
-                                    'actions': student_result.solution_actions,
-                                    'hindsight': False
-                                    })
-
-                    for h in student_result.hindsight_examples:
-                        outcomes.append({'iteration': i,
-                                        'problem': h.statement,
-                                        'proof': h.proof,
-                                        'logprob': h.logprob,
-                                        'actions': h.solution_actions,
-                                        'hindsight': True
-                                        })
-                    if student_result.success:
-                        proven_conjectures.append(student_result.problem)
-                        proofs.append(student_result.proof)
-
-                    examples.extend(student_result.extracted_examples)
-                    print(len(examples), 'accumulated training examples.')
-                    save_json(examples, f'examples_{i}_{index}.json')
-                    save_json(outcomes, f'outcomes_{i}_{index}.json')
-                    agent.train(examples)
-                    
-                    
-                else:
-                    tasks.append(task)
+                tasks.append(task)
 
             # 3- Train model on proofs and outcome of conjectures (easy, hard, timeout)
-            if i < cfg.iterations:
-                print('Collecting', len(tasks), 'results from workers.')
-                student_results = []
-                for task in tqdm(tasks, miniters=1):
-                    student_result = get_task_result(task)
+            print('Collecting', len(tasks), 'results from workers.')
+            student_results = []
+            for task in tqdm(tasks, miniters=1):
+                student_result = get_task_result(task)
 
-                    if student_result.error:
-                        print('Error in prover process!')
-                        print(student_result.error)
-                        continue
+                if student_result.error:
+                    print('Error in prover process!')
+                    print(student_result.error)
+                    continue
 
 
-                    student_results.append(student_result)
+                student_results.append(student_result)
 
-                success_logprobs = []
+            success_logprobs = []
 
             # 3a- Look at all the success logprobs and compute the easy/hard threhsold.
             for student_result in student_results:
@@ -293,9 +246,8 @@ async def teacher_loop(cfg: DictConfig):
                 log.write('\n')
 
                 # 3c- Train model on conjecturing and proof search examples.
-                if i + 1 < cfg.iterations:
-                    print(len(examples), 'accumulated training examples.')
-                    agent.train(examples)
+            print(len(examples), 'accumulated training examples.')
+            agent.train(examples)
 
             save_json(examples, f'examples_{i}.json')
             save_json(outcomes, f'outcomes_{i}.json')
