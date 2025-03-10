@@ -159,10 +159,11 @@ async def teacher_loop(cfg: DictConfig):
             student_results: list[StudentResult] = []
             success_logprobs = []
             examples = []
+            background_theory = worker.BackgroundTheory(theory + "\n\n" + "\n\n".join([thm.theorem for thm in useful_theorems]), premises + [thm.theorem.split(" : ")[0] for thm in useful_theorems])
             for index, conjecture in enumerate(tqdm(conjectures, miniters=1)):
                 task = submit_task(
                     agent,
-                    worker.BackgroundTheory(theory + "\n\n" + "\n\n".join([thm.theorem for thm in useful_theorems]), premises + [thm.theorem.split(" : ")[0] for thm in useful_theorems]),
+                    background_theory,
                     conjecture)
                 # if i == cfg.iterations:
                 #     student_result = get_task_result(task)
