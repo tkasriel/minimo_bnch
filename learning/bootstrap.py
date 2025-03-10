@@ -189,18 +189,20 @@ async def teacher_loop(cfg: DictConfig):
                                     'actions': h.solution_actions,
                                     'hindsight': True
                                     })
+            save_json(outcomes, f'outcomes_{i}.json')
 
             if not success_logprobs:
-                print(f'No solutions found in iteration {i} - stopping learning loop...')
-                break
+                print(f'No solutions found in iteration {i}...')
+                thresholds = [-2.906669173782248, -1.6445413855994306, -0.9526082203994054]
+            #     break
+            else:
+                thresholds = [np.percentile(success_logprobs, p)
+                            for _, p in difficulty_buckets]
 
-            thresholds = [np.percentile(success_logprobs, p)
-                        for _, p in difficulty_buckets]
-
-            print('Thresholds:',
-                list(zip([k for k, _ in difficulty_buckets], thresholds)),
-                'min =', np.min(success_logprobs),
-                'max =', np.max(success_logprobs))
+                print('Thresholds:',
+                    list(zip([k for k, _ in difficulty_buckets], thresholds)),
+                    'min =', np.min(success_logprobs),
+                    'max =', np.max(success_logprobs))
 
             # 3b- Classify problems into easy/hard.
             for student_result in student_results:
@@ -218,7 +220,10 @@ async def teacher_loop(cfg: DictConfig):
                     tags = [outcome]
                     if ": nat" in student_result.problem: tags.append("useful")
                     if student_result.problem.count("z") < 3: tags.append("few_zeros")
-                    examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
+                    try:
+                        examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
+                    except BaseException: # wtf is this
+                        pass
 
                 if student_result.success:
                     proven_conjectures.append(student_result.problem)
@@ -237,7 +242,10 @@ async def teacher_loop(cfg: DictConfig):
                                 tags = [outcome]
                                 if ": nat" in student_result.problem: tags.append("useful")
                                 if student_result.problem.count("z") < 3: tags.append("few_zeros")
-                                examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
+                                try:
+                                    examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
+                                except BaseException:
+                                    pass
                             examples.extend(h.examples)
                             seen_hindsight_goals.add(h.goal)
 
@@ -250,8 +258,10 @@ async def teacher_loop(cfg: DictConfig):
             agent.train(examples)
 
             save_json(examples, f'examples_{i}.json')
-            save_json(outcomes, f'outcomes_{i}.json')
-            torch.save(student_results, f'results_{i}.json')
+            try:
+                torch.save(student_results, f'results_{i}.json')
+            except Exception as e:
+                print(e) # will fix later.
 
 
 @hydra.main(version_base="1.2", config_path="config", config_name="bootstrap")
