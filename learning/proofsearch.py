@@ -34,6 +34,7 @@ class GeneratedProofScript:
 
 
 class ProofStateNode:
+    _proof_states: list[peano.PyProofState]
     def actions(self) -> list[str]:
         raise NotImplementedError
 
@@ -680,7 +681,9 @@ class LMPolicy(Policy):
         children_states = [str(c.state_node) for c in node._children]
         actions = [str(a) for a in node.actions]
         policy_queries = [] if node.is_conjunctive() else actions
-
+        state = node._state._proof_states[0]
+        theory = [x + str(state.lookup(x))[1:] for x in state.premises() if state.lookup(x)]
+        
         policy_estimates, value_estimates = self._lm.estimate_state_and_action_values(
                 str(node.state_node),
                 actions,
@@ -757,7 +760,7 @@ class LMPolicy(Policy):
 
         return policy_examples + value_examples  # + construction_examples
 
-    def extract_examples_from_path(self, path: list[ProofStateNode]) -> list[str]:
+    def extract_examples_from_path(self, path: list[ProofStateNode]) -> list:
         examples = []
 
         for i, (state, action) in enumerate(path):
@@ -980,7 +983,7 @@ class ProofSearchAgent:
         self._checkpoints = 0
         self._examples = []
 
-    def proof_search(self, problem, state):
+    def proof_search(self, problem: str, state: peano.PyProofState):
         root = TreeSearchNode(self._node_type([state]))
 
         node = root

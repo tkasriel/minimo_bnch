@@ -48,10 +48,9 @@ async def teacher_loop(cfg: DictConfig):
     agent = make_agent(cfg)
     # os.chdir("~/minimo")
     theory_folder = "theories"
-    if "outputs" in os.path.abspath(__file__):
+    if "output" in os.getcwd():
         theory_folder = "../../../theories"
-        print(os.path.abspath(__file__))
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), theory_folder, cfg.theory.name + '.p')) as f:
+    with open(os.path.join(os.path.dirname(__file__), theory_folder, cfg.theory.name + '.p')) as f:
         theory = f.read()
     
 
