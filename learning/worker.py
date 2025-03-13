@@ -45,7 +45,7 @@ app.conf.accept_content = ['application/json', 'application/x-python-serialize']
 
 
 def try_prove(agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, statement: str) -> StudentResult:
-    print(f"worker, curr allocated (init): {torch.cuda.memory_allocated()}")
+    # print(f"worker, curr allocated (init): {torch.cuda.memory_allocated()}")
 
     print('Proving', statement, 'on', agent._policy._lm._lm.device)
 

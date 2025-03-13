@@ -164,43 +164,6 @@ async def teacher_loop(cfg: DictConfig):
                     agent,
                     background_theory,
                     conjecture)
-                # if i == cfg.iterations:
-                #     student_result = get_task_result(task)
-                #     student_results.append(student_result)
-
-                #     if student_result.error:
-                #         print('Error in prover process!')
-                #         print(student_result.error)
-                #         continue
-                #     if student_result.success:
-                #         success_logprobs.append(student_result.logprob)
-
-                #     outcomes.append({'iteration': i,
-                #                     'problem': student_result.problem,
-                #                     'proof': student_result.proof,
-                #                     'logprob': student_result.logprob,
-                #                     'actions': student_result.solution_actions,
-                #                     'hindsight': False
-                #                     })
-
-                #     for h in student_result.hindsight_examples:
-                #         outcomes.append({'iteration': i,
-                #                         'problem': h.statement,
-                #                         'proof': h.proof,
-                #                         'logprob': h.logprob,
-                #                         'actions': h.solution_actions,
-                #                         'hindsight': True
-                #                         })
-                #     if student_result.success:
-                #         proven_conjectures.append(student_result.problem)
-                #         proofs.append(student_result.proof)
-
-                #     examples.extend(student_result.extracted_examples)
-                #     print(len(examples), 'accumulated training examples.')
-                #     save_json(examples, f'examples_{i}_{index}.json')
-                #     save_json(outcomes, f'outcomes_{i}_{index}.json')
-                #     theory
-                #     agent.train(examples)
                 tasks.append(task)
 
             # 3- Train model on proofs and outcome of conjectures (easy, hard, timeout)
@@ -242,18 +205,20 @@ async def teacher_loop(cfg: DictConfig):
                                     'actions': h.solution_actions,
                                     'hindsight': True
                                     })
+            save_json(outcomes, f'outcomes_{i}.json')
 
             if not success_logprobs:
-                print(f'No solutions found in iteration {i} - stopping learning loop...')
-                break
+                print(f'No solutions found in iteration {i}...')
+                thresholds = [-2.906669173782248, -1.6445413855994306, -0.9526082203994054]
+            #     break
+            else:
+                thresholds = [np.percentile(success_logprobs, p)
+                            for _, p in difficulty_buckets]
 
-            thresholds = [np.percentile(success_logprobs, p)
-                        for _, p in difficulty_buckets]
-
-            print('Thresholds:',
-                list(zip([k for k, _ in difficulty_buckets], thresholds)),
-                'min =', np.min(success_logprobs),
-                'max =', np.max(success_logprobs))
+                print('Thresholds:',
+                    list(zip([k for k, _ in difficulty_buckets], thresholds)),
+                    'min =', np.min(success_logprobs),
+                    'max =', np.max(success_logprobs))
 
             # Cut the least used theorems
             useful_theorems = [thm for thm in useful_theorems if not (i - thm.iter_generated >= 3 and thm.freq_used == 0)]
