@@ -253,7 +253,12 @@ class HolophrasmNode(ProofStateNode):
             return '<solved>'
 
         lines = []
+        
         lines.append(f'G={len(self._proof_states)}')
+
+        state = self._proof_states[0]
+        theory = [x + str(state.lookup(x))[1:] for x in state.premises() if state.lookup(x)]
+        lines.append("Theorems: " + "\n".join(theory) + "\n")
 
         for i, ps in enumerate(self._proof_states):
             if i > 0:
@@ -681,8 +686,6 @@ class LMPolicy(Policy):
         children_states = [str(c.state_node) for c in node._children]
         actions = [str(a) for a in node.actions]
         policy_queries = [] if node.is_conjunctive() else actions
-        state = node._state._proof_states[0]
-        theory = [x + str(state.lookup(x))[1:] for x in state.premises() if state.lookup(x)]
         
         policy_estimates, value_estimates = self._lm.estimate_state_and_action_values(
                 str(node.state_node),

@@ -48,7 +48,8 @@ async def teacher_loop(cfg: DictConfig):
     agent = make_agent(cfg)
     # os.chdir("~/minimo")
     theory_folder = "theories"
-    if "output" in os.getcwd():
+    if "output" in os.path.abspath(__file__):
+        # print(os.path.abspath(__file__))
         theory_folder = "../../../theories"
     with open(os.path.join(os.path.dirname(__file__), theory_folder, cfg.theory.name + '.p')) as f:
         theory = f.read()
@@ -69,7 +70,6 @@ async def teacher_loop(cfg: DictConfig):
 
     continue_dir = cfg.get('continue')
     start_iteration = 0
-    # continue_dir = "/Users/tkasriel/code/rsh/minimo/learning/outputs/2025-01-28/12-49-46"
 
     if continue_dir is not None:
         os.chdir(continue_dir)
@@ -185,7 +185,7 @@ async def teacher_loop(cfg: DictConfig):
                     success_logprobs.append(student_result.logprob)
                     for conj in useful_theorems:
                         conj_name = conj.theorem.split(" : ")[0]
-                        if conj_name in student_result.proof: #type: ignore
+                        if any([conj_name in r for r in student_result.proof]): #type: ignore
                             conj.freq_used += 1
 
 
@@ -209,8 +209,8 @@ async def teacher_loop(cfg: DictConfig):
 
             if not success_logprobs:
                 print(f'No solutions found in iteration {i}...')
-                thresholds = [-2.906669173782248, -1.6445413855994306, -0.9526082203994054]
-            #     break
+                # thresholds = [-2.906669173782248, -1.6445413855994306, -0.9526082203994054]
+                break
             else:
                 thresholds = [np.percentile(success_logprobs, p)
                             for _, p in difficulty_buckets]
@@ -241,7 +241,8 @@ async def teacher_loop(cfg: DictConfig):
                                 if (student_result.logprob <= thresholds[i] or
                                     i + 1 == len(difficulty_buckets)))
                     
-                    useful_theorems.append(UsefulConjecture(f"c{conjecture_index} : " + student_result.problem + ".", i, 0))
+                    if ": nat" in student_result.problem:
+                        useful_theorems.append(UsefulConjecture(f"c{conjecture_index:4} : " + student_result.problem + ".", i, 0))
                     conjecture_index += 1
                 else:
                     outcome = FAIL
