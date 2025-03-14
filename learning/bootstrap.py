@@ -98,7 +98,7 @@ async def teacher_loop(cfg: DictConfig):
                                          o['proof'] is not None]
                 seen_hindsight_goals = {o['problem'] for o in outcomes
                                         if o['hindsight'] and o['proof'] is not None}
-            with open(f"generated_theorems_{i}") as f:
+            with open(f"generated_theorems_{i-1}.json") as f:
                 thms = json.load(f)
                 useful_theorems = [UsefulConjecture(**thm) for thm in thms]
 
@@ -227,7 +227,7 @@ async def teacher_loop(cfg: DictConfig):
             for thm in useful_theorems:
                 if thm.freq_used == 0:
                     continue
-                thm_str = thm.theorem.split(" : ")[1][:-1]
+                thm_str = " : ".join(thm.theorem.split(" : ")[1:])[:-1]
                 to_add = f'Conj:(useful) ' + d.elaborate(thm_str)
                 if not to_add in examples:
                     examples.append(to_add)
@@ -240,9 +240,8 @@ async def teacher_loop(cfg: DictConfig):
                                 for i, (k, _) in enumerate(difficulty_buckets)
                                 if (student_result.logprob <= thresholds[i] or
                                     i + 1 == len(difficulty_buckets)))
-                    
                     if ": nat" in student_result.problem:
-                        useful_theorems.append(UsefulConjecture(f"c{conjecture_index:4} : " + student_result.problem + ".", i, 0))
+                        useful_theorems.append(UsefulConjecture(f"c{conjecture_index:04} : " + student_result.problem + ".", i, 0))
                     conjecture_index += 1
                 else:
                     outcome = FAIL
