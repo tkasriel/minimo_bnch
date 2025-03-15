@@ -23,7 +23,6 @@ from util import format_blocks_with_indent, sample_batch, setup_wandb, value_col
 from conjecture import AgentLM, Context, UsefulConjecture, sample_conjecture
 from proofsearch import ProofSearchAgent, make_agent
 
-
 def now() -> str:
     return '[' + datetime.datetime.now().isoformat() + ']'
 
@@ -87,7 +86,7 @@ async def teacher_loop(cfg: DictConfig):
                 agent.train(examples)
         else:
             start_iteration = i
-            agent = torch.load(f'{i}.pt')
+            agent = torch.load(f'{i}.pt', map_location=None if torch.cuda.is_available() else "cpu")
             print('Loaded agent from', f'{i}.pt')
         # Load examples and outcomes.
         if i > 0:
@@ -260,8 +259,10 @@ async def teacher_loop(cfg: DictConfig):
                     proofs.append(student_result.proof)
 
                 examples.extend(student_result.extracted_examples)
-                with open("long_examples.json", "r") as f:
-                    long_ex = json.load(f)
+                long_ex = []
+                if os.path.exists("long_examples.json"):
+                    with open("long_examples.json", "r") as f:
+                        long_ex = json.load(f)
                 if cfg.train_policy_on_hindsight_examples:
                     for h in student_result.hindsight_examples:
                         if h.goal not in seen_hindsight_goals:

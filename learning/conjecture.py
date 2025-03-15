@@ -22,11 +22,15 @@ from util import batch_inference
 
 ALLOW_PROP_AS_TYPE = False
 
-@dataclass
 class UsefulConjecture:
     theorem: str
     iter_generated: int
     freq_used: int
+
+    def __init__(self, theorem: str, iter_generated: str | int, freq_used: str | int):
+        self.theorem = theorem
+        self.iter_generated = int(iter_generated)
+        self.freq_used = int(freq_used)
     
     def to_dict(self) -> dict[str, str]:
         return {
