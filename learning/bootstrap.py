@@ -227,7 +227,9 @@ async def teacher_loop(cfg: DictConfig):
             for thm in useful_theorems:
                 if thm.freq_used == 0:
                     continue
-                thm_str = " : ".join(thm.theorem.split(" : ")[1:])[:-1]
+                thm_arr = list(map(str, thm.theorem.split(" : ")[1:]))
+
+                thm_str = (" : ".join(thm_arr))[:-1]
                 to_add = f'Conj:(useful) ' + d.elaborate(thm_str)
                 if not to_add in examples:
                     examples.append(to_add)
@@ -258,10 +260,17 @@ async def teacher_loop(cfg: DictConfig):
                     proofs.append(student_result.proof)
 
                 examples.extend(student_result.extracted_examples)
-
+                with open("long_examples.json", "r") as f:
+                    long_ex = json.load(f)
                 if cfg.train_policy_on_hindsight_examples:
                     for h in student_result.hindsight_examples:
                         if h.goal not in seen_hindsight_goals:
+                            if len(h.proof) > 4:
+                                long_ex.append({
+                                    "goal": str(h.goal),
+                                    "proof": h.proof,
+                                    "length": str(len(h.proof))
+                                })
                             outcome = next(k
                                         for i, (k, _) in enumerate(difficulty_buckets)
                                         if h.logprob <= thresholds[i] or i + 1 == len(difficulty_buckets))
@@ -273,7 +282,8 @@ async def teacher_loop(cfg: DictConfig):
                                 examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
                             examples.extend(h.examples)
                             seen_hindsight_goals.add(h.goal)
-
+                with open("long_examples.json", "w") as f:
+                    json.dump(long_ex, f)
             # Finally, we add our generated and proven theorems into our useful theorems pile
 
             # 3c- Train model on conjecturing and proof search examples.
