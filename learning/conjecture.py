@@ -55,8 +55,8 @@ class Conjecture(Node):
     prop: 'Prop'
 
     @staticmethod
-    def parse(tokens: list[str], context):
-        return Prop.parse(tokens, context)
+    def parse(tokens: list[str], context, seed = None):
+        return Prop.parse(tokens, context, seed = seed)
 
     def __str__(self):
         return str(self.prop)
@@ -67,7 +67,7 @@ class Prop(Node):
     prop: Union['App', 'Arrow', 'Atom']
 
     @staticmethod
-    def parse(tokens: list[str], context):
+    def parse(tokens: list[str], context, seed = None):
         context = context.with_target_type('prop')
         node, consumed, completions = App.parse(tokens, context)
 
@@ -79,7 +79,7 @@ class Prop(Node):
         if consumed:
             return node, consumed, completions_atom
 
-        node_a, consumed_a, completions_a = Arrow.parse(tokens, context)
+        node_a, consumed_a, completions_a = Arrow.parse(tokens, context, seed)
         return node_a, consumed_a, completions + completions_atom + completions_a
 
     def __str__(self):
@@ -289,13 +289,13 @@ class Decl(Node):
 @dataclass
 class Arrow(Node):
     input_types: list['Decl']
-    output_type: 'Value'
+    output_type: list['Value']
 
     def __str__(self):
         return '[' + ' -> '.join(map(str, self.input_types + [self.output_type])) + ']'
 
     @staticmethod
-    def parse(tokens: list[str], context):
+    def parse(tokens: list[str], context, seed = None):
         consumed = 0
 
         if not tokens:
@@ -307,21 +307,22 @@ class Arrow(Node):
             return None, 0, []
 
         input_types = []
-        output_type = None
+        output_type = []
 
         while True:
-            decl_node, decl_consumed, decl_completions = Decl.parse(tokens, context)
-            consumed, tokens = consumed + decl_consumed, tokens[decl_consumed:]
+            if(len(output_type) == 0):
+                decl_node, decl_consumed, decl_completions = Decl.parse(tokens, context)
+                consumed, tokens = consumed + decl_consumed, tokens[decl_consumed:]
 
-            if decl_node:
-                input_types.append(decl_node)
+                if decl_node:
+                    input_types.append(decl_node)
 
-                if tokens and tokens[0] == '->':
-                    tokens = tokens[1:]
-                else:
-                    return None, consumed, [' -> ']
+                    if tokens and tokens[0] == '->':
+                        tokens = tokens[1:]
+                    else:
+                        return None, consumed, [' -> ']
 
-                continue
+                    continue
 
             # If either this is the first element of the arrow (empty input_types)
             # or we're in the middle of the Decl, return.
@@ -334,8 +335,21 @@ class Arrow(Node):
 
             if out_node:
                 # We parsed all input types and now also the output type.
-                output_type = out_node
-                break
+                output_type.append(out_node)
+
+                if (not seed):
+                    break
+                if tokens and tokens[0] == '->':
+                    tokens = tokens[1:]
+                else:
+                    return None, consumed, out_completions + [' -> ']
+
+                out_node, out_consumed, out_completions = Value.parse(tokens, context)
+                consumed, tokens = consumed + out_consumed, tokens[out_consumed:]
+
+                if(out_node):
+                    output_type.append(out_node)
+                    break
 
             return None, consumed, decl_completions + out_completions
 
@@ -371,18 +385,19 @@ def pretty_print_conjecture(conjecture: str) -> str:
 
 MAX_OPEN_PARENS = 8
 
-def sample_conjecture(lm, context, max_it=100):
+def sample_conjecture(lm, context, seed = None, max_it=100):
     generation = ''
 
-    for _ in range(max_it):
+    if(seed):
+        generation = seed
+    
+    for i in range(max_it):
         tokens = tokenize(generation)
-        node, _, completions = Conjecture.parse(tokens, context.clone())
-
+        node, _, completions = Conjecture.parse(tokens, context.clone(), seed)
         if node:
             return generation
-
+        
         completions = list(set(space_completions(generation, completions)))
-
         choice = ''
 
         while choice not in completions:
