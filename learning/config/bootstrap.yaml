@@ -3,7 +3,7 @@ task: teacher
 defaults:
     - _self_
     - agent: mcts-lm
-    - theory: propositional-logic
+    - theory: nat-mul
 
 iterations: 5
 n_conjectures: 200
