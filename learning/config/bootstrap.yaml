@@ -5,7 +5,7 @@ defaults:
     - agent: mcts-lm
     - theory: nat-add
 
-iterations: 5
+iterations: 10
 n_conjectures: 50
 
 difficulty_buckets:
