@@ -76,7 +76,7 @@ async def teacher_loop(cfg: DictConfig):
             i += 1
         i -= 1
         start_iteration = i
-        agent = torch.load(f'{i}.pt')
+        agent = torch.load(f'{i}.pt', weights_only=False)
         print('Loaded agent from', f'{i}.pt')
         # Load examples and outcomes.
         if i > 0:
