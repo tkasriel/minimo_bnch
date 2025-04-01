@@ -371,8 +371,9 @@ def pretty_print_conjecture(conjecture: str) -> str:
 
 MAX_OPEN_PARENS = 8
 
-def sample_conjecture(lm, context, max_it=100):
+def sample_conjecture(lm, context, max_it=100, proven_conjectures = []):
     generation = ''
+    is_assumption = False
 
     for _ in range(max_it):
         tokens = tokenize(generation)
@@ -398,8 +399,9 @@ def sample_conjecture(lm, context, max_it=100):
                     max_common_prefix_len = l
                 else:
                     break
-
             # Add the maximum common prefix to the generation, which doesn't need the LM.
+            if ":" in completions[0][:max_common_prefix_len]:
+                is_assumption = True
             generation += completions[0][:max_common_prefix_len]
             completions = [c[max_common_prefix_len:] for c in completions]
 
@@ -410,7 +412,17 @@ def sample_conjecture(lm, context, max_it=100):
             choices = list(set(c[0] for c in completions))
             choice = random.choices(choices, list(map(math.exp,
                                                       lm.score(choices, mean=False, prefix=generation))))[0]
-            generation += choice
+            if is_assumption and "nat" not in choice and choice != " " and len(proven_conjectures) > 0:
+                is_assumption = False
+                generation += random.choice(proven_conjectures)
+                continue
+            else:
+                if is_assumption and "nat" in choice:
+                    is_assumption = False
+                generation += choice
+                if ":" in choice:
+                    is_assumption = True
+            
             # Filter completions to those starting with the chosen character and drop the character.
             completions = [c[1:] for c in completions if c.startswith(choice)]
             # print(generation)

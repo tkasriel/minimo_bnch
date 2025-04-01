@@ -46,8 +46,11 @@ async def teacher_loop(cfg: DictConfig):
     print('Running in', 'distributed mode.' if DISTRIBUTED else 'single-process mode.')
 
     agent = make_agent(cfg)
-    # os.chdir("~/minimo")
-    with open(os.path.join(os.path.dirname(__file__), 'theories', cfg.theory.name + '.p')) as f:
+    theory_folder = "theories"
+    if "output" in os.getcwd():
+        theory_folder = "../../../theories"
+
+    with open(os.path.join(os.getcwd(), theory_folder, cfg.theory.name + '.p')) as f:
         theory = f.read()
 
     difficulty_buckets = sorted([list(cfg.difficulty_buckets[i].items())[0]
@@ -109,7 +112,7 @@ async def teacher_loop(cfg: DictConfig):
 
             while len(conjectures) < cfg.n_conjectures:
                 # print("sub proposal")
-                proposal = sample_conjecture(AgentLM(agent, 'Conj:(hard,useful,few_zeros) '), context)
+                proposal = sample_conjecture(AgentLM(agent, 'Conj:(hard,useful,few_zeros) '), context, proven_conjectures=proven_conjectures)
                 # print(proposal)
 
                 if proposal and proposal not in conjectures + proven_conjectures:
