@@ -412,12 +412,13 @@ def sample_conjecture(lm, context, max_it=100, proven_conjectures = []):
             choices = list(set(c[0] for c in completions))
             choice = random.choices(choices, list(map(math.exp,
                                                       lm.score(choices, mean=False, prefix=generation))))[0]
-            if is_assumption and "nat" not in choice and choice != " " and len(proven_conjectures) > 0:
+            if is_assumption and "n" not in choice and choice != " " and len(proven_conjectures) > 0:
                 is_assumption = False
-                generation += random.choice(proven_conjectures)
-                continue
+                generation += random.choice(proven_conjectures) + ")"
+                completions = ['']
+                break
             else:
-                if is_assumption and "nat" in choice:
+                if is_assumption and "n" in choice:
                     is_assumption = False
                 generation += choice
                 if ":" in choice:

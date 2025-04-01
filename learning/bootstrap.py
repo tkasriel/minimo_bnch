@@ -41,6 +41,16 @@ def submit_task(agent: ProofSearchAgent, theory: worker.BackgroundTheory, statem
 def get_task_result(task):
     return task
 
+def clean_conj(conjectures: list[str]) -> list[str]:
+    out: list[str] = []
+    for conj in conjectures:
+        if conj[0] == "[":
+            conj = conj[1:-1]
+        conj.replace("nat","n").replace("a", "x")
+        out.append(conj)
+    return out
+
+
 
 async def teacher_loop(cfg: DictConfig):
     print('Running in', 'distributed mode.' if DISTRIBUTED else 'single-process mode.')
@@ -112,7 +122,7 @@ async def teacher_loop(cfg: DictConfig):
 
             while len(conjectures) < cfg.n_conjectures:
                 # print("sub proposal")
-                proposal = sample_conjecture(AgentLM(agent, 'Conj:(hard,useful,few_zeros) '), context, proven_conjectures=proven_conjectures)
+                proposal = sample_conjecture(AgentLM(agent, 'Conj:(hard,useful,few_zeros) '), context, proven_conjectures=clean_conj(proven_conjectures))
                 # print(proposal)
 
                 if proposal and proposal not in conjectures + proven_conjectures:
