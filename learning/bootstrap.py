@@ -46,7 +46,7 @@ def clean_conj(conjectures: list[str]) -> list[str]:
     for conj in conjectures:
         if conj[0] == "[":
             conj = conj[1:-1]
-        conj.replace("nat","n").replace("a", "x")
+        conj = conj.replace("nat","n").replace("a", "x")
         out.append(conj)
     return out
 
@@ -89,7 +89,7 @@ async def teacher_loop(cfg: DictConfig):
             i += 1
         i -= 1
         start_iteration = i
-        agent = torch.load(f'{i}.pt')
+        agent = torch.load(f'{i}.pt',map_location=torch.device('cpu'))
         print('Loaded agent from', f'{i}.pt')
         # Load examples and outcomes.
         if i > 0:
