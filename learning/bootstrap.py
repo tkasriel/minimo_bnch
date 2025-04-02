@@ -47,7 +47,10 @@ def clean_conj(conjectures: list[str]) -> list[str]:
         if conj[0] == "[":
             conj = conj[1:-1]
         conj = conj.replace("nat","n").replace("a", "x")
+        if "->" in conj:
+            conj = "(" + conj + ")"
         out.append(conj)
+
     return out
 
 
