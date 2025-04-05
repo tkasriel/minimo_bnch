@@ -124,7 +124,16 @@ async def teacher_loop(cfg: DictConfig):
             conjectures: list[str] = []
 
             while len(conjectures) < cfg.n_conjectures:
-                proposal = sample_conjecture(AgentLM(agent, 'Conj:(hard,useful) '), context)
+                # print("sub proposal")
+                prompt = 'Conj:(hard,useful,few_zeros) '
+                if(np.random.random() > 0.5 and len(proven_conjectures) > 0):
+                    seed = np.random.choice(proven_conjectures) + "->"
+                else:
+                    seed = None
+
+                # seed = "[('a0 : (= nat (s (s (s z))) z)) -> (= nat z z) -> "
+                proposal = sample_conjecture(AgentLM(agent, prompt), context, seed = seed)
+                #print(proposal)
 
                 if proposal and proposal not in conjectures + proven_conjectures:
                     # Contract conjectures to make them Peano-parseable.

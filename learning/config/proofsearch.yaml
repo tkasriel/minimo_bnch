@@ -4,6 +4,7 @@ problemset: natural-number-game
 
 max_problems: 5000
 accumulate_library: false
+n_conjectures: 50
 
 agent:
     max_mcts_nodes: 1000
