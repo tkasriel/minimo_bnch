@@ -7,6 +7,7 @@ import os
 import io
 import json
 import datetime
+import time
 
 import hydra
 from omegaconf import DictConfig, ListConfig
@@ -108,6 +109,7 @@ async def teacher_loop(cfg: DictConfig):
 
     with open('log.jsonl', 'w') as log:
         for i in range(start_iteration, cfg.iterations):
+            start_time = time.time()
             torch.save(agent, f'{i}.pt')
             print(f"current it: {i}")
             context = Context(d, None, [])
@@ -181,6 +183,7 @@ async def teacher_loop(cfg: DictConfig):
                 for index, conjecture in enumerate(tqdm(conjectures, miniters=1)):
                     init_pool(agent, background_theory)
                     student_results.append(submit_task(conjecture, True))
+            end_search_time = time.time()
 
             # 3- Train model on proofs and outcome of conjectures (easy, hard, timeout)
             # print('Collecting', len(tasks), 'results from workers.')
@@ -283,6 +286,12 @@ async def teacher_loop(cfg: DictConfig):
                 # 3c- Train model on conjecturing and proof search examples.
             print(len(examples), 'accumulated training examples.')
             agent.train(examples)
+            train_end_time = time.time()
+            with open("time_metric.txt", "a+") as tm:
+                tm.write(f"Iteration {i}: \n")
+                tm.write(f"Proof search took {end_search_time-start_time}s\n")
+                tm.write(f"Training took {train_end_time-end_search_time}s\n")
+                tm.write(f"Total time taken: {train_end_time-start_time}s\n")
 
             save_json(examples, f'examples_{i}.json')
             try:
