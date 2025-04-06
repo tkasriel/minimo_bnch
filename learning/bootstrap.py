@@ -29,6 +29,7 @@ def now() -> str:
 
 
 FAIL = "fail"
+TWEAK_DIFFICULTY = True # controls whether length is taken as a criteria in difficultiness
 
 
 DISTRIBUTED = os.environ.get('DISTRIBUTED', False)
@@ -142,7 +143,6 @@ async def teacher_loop(cfg: DictConfig):
             # agent_dump = buff.getvalue()
 
             print('Submitting tasks...')
-            success_logprobs = []
             examples = []
             background_theory = worker.BackgroundTheory(theory, premises)
             for index, conjecture in enumerate(tqdm(conjectures, miniters=1)):
@@ -167,11 +167,17 @@ async def teacher_loop(cfg: DictConfig):
                 student_results.append(student_result)
 
             success_logprobs = []
+            success_norm_logprobs = []
 
             # 3a- Look at all the success logprobs and compute the easy/hard threhsold.
             for student_result in student_results:
                 if student_result.success:
-                    success_logprobs.append(student_result.logprob)
+                    if not TWEAK_DIFFICULTY:
+                        success_logprobs.append(student_result.logprob)
+                    else:
+                        # this choice normalizes log-probability over the length of solutions
+                        success_norm_logprobs.append(student_result.logprob / (len(student_result.solution_actions)+1))
+
 
                 outcomes.append({'iteration': i,
                                 'problem': student_result.problem,
@@ -191,27 +197,43 @@ async def teacher_loop(cfg: DictConfig):
                                     })
             save_json(outcomes, f'outcomes_{i}.json')
 
-            if not success_logprobs:
-                print(f'No solutions found in iteration {i}...')
-                thresholds = [-2.906669173782248, -1.6445413855994306, -0.9526082203994054]
-            #     break
+            if not TWEAK_DIFFICULTY:
+                if not success_logprobs:
+                    print(f'No solutions found in iteration {i}...')
+                    thresholds = [-2.906669173782248, -1.6445413855994306, -0.9526082203994054]
+                #     break
+                else:
+                    thresholds = [np.percentile(success_logprobs, p)
+                                for _, p in difficulty_buckets]
             else:
-                thresholds = [np.percentile(success_logprobs, p)
-                            for _, p in difficulty_buckets]
+                if not success_norm_logprobs:
+                    print(f'No solutions found in iteration {i}...')
+                    thresholds = [-2.906669173782248, -1.6445413855994306, -0.9526082203994054]
+                #     break
+                else:
+                    thresholds = [np.percentile(success_norm_logprobs, p)
+                                for _, p in difficulty_buckets]
 
-                print('Thresholds:',
-                    list(zip([k for k, _ in difficulty_buckets], thresholds)),
-                    'min =', np.min(success_logprobs),
-                    'max =', np.max(success_logprobs))
+                #print('Thresholds:',
+                #    list(zip([k for k, _ in difficulty_buckets], thresholds)),
+                #    'min =', np.min(:
+                #        ),
+                #    'max =', np.max(success_logprobs))
 
             # 3b- Classify problems into easy/hard.
             for student_result in student_results:
                 # Outcome is the name of the first difficulty bucket that is larger than the logprob.
                 if student_result.success:
-                    outcome = next(k
-                                for i, (k, _) in enumerate(difficulty_buckets)
-                                if (student_result.logprob <= thresholds[i] or
-                                    i + 1 == len(difficulty_buckets)))
+                    if not TWEAK_DIFFICULTY:
+                        outcome = next(k
+                                    for i, (k, _) in enumerate(difficulty_buckets)
+                                    if (student_result.logprob <= thresholds[i] or
+                                        i + 1 == len(difficulty_buckets)))
+                    else:
+                        outcome = next(k
+                                    for i, (k, _) in enumerate(difficulty_buckets)
+                                    if (student_result.logprob / (len(student_result.solution_actions)+1) <= thresholds[i] or
+                                        i + 1 == len(difficulty_buckets)))
                 else:
                     outcome = FAIL
 
@@ -231,12 +253,20 @@ async def teacher_loop(cfg: DictConfig):
 
                 examples.extend(student_result.extracted_examples)
 
+                # tagging the hindsight outcomes
                 if cfg.train_policy_on_hindsight_examples:
                     for h in student_result.hindsight_examples:
                         if h.goal not in seen_hindsight_goals:
-                            outcome = next(k
-                                        for i, (k, _) in enumerate(difficulty_buckets)
-                                        if h.logprob <= thresholds[i] or i + 1 == len(difficulty_buckets))
+                            # consistent difficulty metric with the proved theorems
+                            if not TWEAK_DIFFICULTY:
+                                outcome = next(k
+                                            for i, (k, _) in enumerate(difficulty_buckets)
+                                            if h.logprob <= thresholds[i] or i + 1 == len(difficulty_buckets))
+                            else:
+                                outcome = next(k
+                                            for i, (k, _) in enumerate(difficulty_buckets)
+                                            if h.logprob / (len(h.solution_actions)+1) <= thresholds[i] or i + 1 == len(difficulty_buckets))
+
 
                             if not cfg.get('freeze_conjecturer', False):
                                 tags = [outcome]
@@ -253,7 +283,7 @@ async def teacher_loop(cfg: DictConfig):
                                     'msg': f'Training on {len(examples)} examples.'}))
                 log.write('\n')
 
-                # 3c- Train model on conjecturing and proof search examples.
+            # 3c- Train model on conjecturing and proof search examples.
             print(len(examples), 'accumulated training examples.')
             agent.train(examples)
 

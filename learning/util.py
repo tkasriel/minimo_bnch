@@ -24,6 +24,7 @@ EOS = 2
 POSITIVE = ord(';')
 NEGATIVE = ord('$')
 EMPTY = '\x03'
+DIFFCULTY_AWARE = True # controls whether the difficulty metric is considered when sampling for training batches
 
 def count_parameters(model):
     return sum(math.prod(p.shape) for p in model.parameters())
@@ -65,15 +66,41 @@ def sample_batch(examples: list[str], batch_size: int, trim_len: int = 500) -> l
     batch = []
     max_size = 0
 
-    while True:
-        example = random.choice(examples)
-        example_len = min(len(example), trim_len)
-        max_size = max(max_size, example_len)
+    if not DIFFCULTY_AWARE:
+        while True:
+            example = random.choice(examples)
+            example_len = min(len(example), trim_len)
+            max_size = max(max_size, example_len)
 
-        if max_size * (1 + len(batch)) > batch_size:
-            break
+            if max_size * (1 + len(batch)) > batch_size:
+                break
 
-        batch.append(example)
+            batch.append(example)
+    else:
+        # calculate the sample weights based on difficulty level
+        weights = []
+        for example in examples:
+            if example.startswith("Conj:("):
+                difficulty = example.split("Conj:(")[1].split(")")[0].strip()
+                if difficulty == "hard":
+                    weights.append(4)  # Weight of 4 for "hard"
+                elif difficulty == "easy":
+                    weights.append(3)  # Weight of 3 for "easy"
+                elif difficulty == "triv":
+                    weights.append(2)  # Weight of 2 for "triv"
+                else:
+                    weights.append(1)  # Weight of 1 for "fail", etc.
+            else:
+                weights.append(0)  # No conjecture tag, ignore
+        # now sample the examples according to their weights
+        while True:
+            example = random.choices(examples, weights=weights, k=1)[0]
+            example_len = min(len(example), trim_len)
+            max_size = max(max_size, example_len)
+            if max_size * (1 + len(batch)) > batch_size:
+                break
+            batch.append(example)
+
 
     return batch
 
