@@ -652,7 +652,9 @@ class UniformPolicy(Policy):
 
         for c in node._children:
             c._value_estimate = 0.5
-
+    
+    def share_memory(self):
+        return
 
 class LMPolicy(Policy):
     def __init__(self, config):
@@ -799,6 +801,9 @@ class LMPolicy(Policy):
     def train(self, examples, verbose=True):
         self._lm.fit(examples, self._batch_size, self._train_batches, verbose)
         self._lm.eval()
+    
+    def share_memory(self):
+        self._lm.share_memory()
 
 
 class MonteCarloTreeSearch(Policy):
@@ -980,7 +985,7 @@ class ProofSearchAgent:
         self._checkpoints = 0
         self._examples = []
 
-    def proof_search(self, problem, state):
+    def proof_search(self, problem, state, verbose: bool =False):
         root = TreeSearchNode(self._node_type([state]))
 
         node = root
@@ -988,31 +993,35 @@ class ProofSearchAgent:
         examples = []
 
         while not (node.is_terminal() or node.is_dead()):
-            print('State:', node.state_node)
+            if verbose:
+                print('State:', node.state_node)
 
             mcts = MonteCarloTreeSearch(self._policy, self._max_mcts_nodes, use_policy=True)
-            solved, pi, _, it = mcts.evaluate(node)
+            solved, pi, _, it = mcts.evaluate(node, verbose=verbose)
 
             if solved:
                 break
-
-            print('Actions:', list(map(str, node.actions)))
-            print('Policy:', pi)
+            
+            if verbose:
+                print('Actions:', list(map(str, node.actions)))
+                print('Policy:', pi)
 
             best = pi.argmax()
 
-            print('Taking action', node.actions[best])
+            if verbose:
+                print('Taking action', node.actions[best])
             node = node.children()[best]
 
             iterations += 1
             if iterations >= self._max_searches:
                 break
-
-        if solved:
-            print('Found solution!')
-            print(format_blocks_with_indent(root.reconstruct_proof()))
-        else:
-            print('Did not find solution.')
+        
+        if verbose:
+            if solved:
+                print('Found solution!')
+                print(format_blocks_with_indent(root.reconstruct_proof()))
+            else:
+                print('Did not find solution.')
 
         examples = self._policy.extract_examples(root)
         self._examples.extend(examples)
@@ -1040,6 +1049,10 @@ class ProofSearchAgent:
             self._policy.train(example_strs)
 
         self._training_its += 1
+
+    def share_memory(self):
+        if self._policy:
+            return self._policy.share_memory()
 
 def mcts_example(cfg):
     problemset = problems.load_problemset('nng')

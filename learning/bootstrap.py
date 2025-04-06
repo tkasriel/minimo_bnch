@@ -13,6 +13,7 @@ from omegaconf import DictConfig, ListConfig
 import torch
 import numpy as np
 from tqdm import tqdm
+import torch.multiprocessing as mp
 
 import peano
 from problems import load_natural_number_game_problemset
@@ -29,25 +30,35 @@ def now() -> str:
 
 
 FAIL = "fail"
+agent=None
+background_theory = None
+
+def init_pool(a: ProofSearchAgent, b: worker.BackgroundTheory):
+    global agent, background_theory
+    agent = a
+    background_theory = b
 
 
-DISTRIBUTED = os.environ.get('DISTRIBUTED', False)
+def submit_task(statement: str, verbose=False):
+    global agent, background_theory
+    assert agent is not None
+    assert background_theory is not None
+    return worker.try_prove(agent, background_theory, statement, verbose)
 
 
-def submit_task(agent: ProofSearchAgent, theory: worker.BackgroundTheory, statement: str):
-    return worker.try_prove(agent, theory, statement)
-
-
-def get_task_result(task):
-    return task
+# def get_task_result(task: mp.Process) -> StudentResult:
+#     return task.join()
 
 
 async def teacher_loop(cfg: DictConfig):
-    print('Running in', 'distributed mode.' if DISTRIBUTED else 'single-process mode.')
-
+    if cfg.get("use_multiprocessing"):
+        mp.set_start_method(cfg.get("mp_start_method"))
     agent = make_agent(cfg)
-    # os.chdir("~/minimo")
-    with open(os.path.join(os.path.dirname(__file__), 'theories', cfg.theory.name + '.p')) as f:
+    theory_folder = "theories"
+    if "output" in os.path.abspath(__file__):
+        # print(os.path.abspath(__file__))
+        theory_folder = "../../../theories"
+    with open(os.path.join(os.path.dirname(__file__), theory_folder, cfg.theory.name + '.p')) as f:
         theory = f.read()
 
     difficulty_buckets = sorted([list(cfg.difficulty_buckets[i].items())[0]
@@ -133,40 +144,56 @@ async def teacher_loop(cfg: DictConfig):
             log.flush()
 
             # 2- Try to prove each of the conjectures
-            tasks = []
-            student_results = []
 
             # Dump current agent.
             # buff = io.BytesIO()
             # torch.save(agent, buff)
             # agent_dump = buff.getvalue()
 
-            print('Submitting tasks...')
+            print('Running proof search...')
+            student_results: list[StudentResult] = []
             success_logprobs = []
             examples = []
             background_theory = worker.BackgroundTheory(theory, premises)
-            for index, conjecture in enumerate(tqdm(conjectures, miniters=1)):
-                task = submit_task(
-                    agent,
-                    background_theory,
-                    conjecture)
-                tasks.append(task)
+            if cfg.get("use_multiprocessing"):
+                agent.share_memory()
+                with mp.Pool(processes=cfg.get("num_processes"), initializer=init_pool, initargs=(agent, background_theory)) as p:
+                    print(f"{cfg.get('num_processes')} processes initialized")
+                    for res in tqdm(p.imap_unordered(submit_task, conjectures), total=len(conjectures)):
+                        assert type(res) is StudentResult
+                        print(f"Conjecture: {res.problem}")
+                        if res.error:
+                            print("Proof search errored.")
+                            print(res.error)
+                            continue
+                        if res.success:
+                            assert res.proof
+                            print("Proof search was a success! Proof is")
+                            print("\n\t".join(res.proof))
+                            print(f"logprob: {res.logprob}")
+                        else:
+                            print("Proof search failed")
+                        print(f"Got {len(res.hindsight_examples)} hindsight examples\n")
+                        student_results.append(res)
+
+
+            else:
+                for index, conjecture in enumerate(tqdm(conjectures, miniters=1)):
+                    init_pool(agent, background_theory)
+                    student_results.append(submit_task(conjecture, True))
 
             # 3- Train model on proofs and outcome of conjectures (easy, hard, timeout)
-            print('Collecting', len(tasks), 'results from workers.')
-            student_results = []
-            for task in tqdm(tasks, miniters=1):
-                student_result = get_task_result(task)
+            # print('Collecting', len(tasks), 'results from workers.')
+            # for task in tqdm(tasks, miniters=1):
+            #     student_result = get_task_result(task)
 
-                if student_result.error:
-                    print('Error in prover process!')
-                    print(student_result.error)
-                    continue
+            #     if student_result.error:
+            #         print('Error in prover process!')
+            #         print(student_result.error)
+            #         continue
 
 
-                student_results.append(student_result)
-
-            success_logprobs = []
+                # student_results.append(student_result)
 
             # 3a- Look at all the success logprobs and compute the easy/hard threhsold.
             for student_result in student_results:
