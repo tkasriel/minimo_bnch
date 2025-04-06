@@ -127,7 +127,7 @@ async def teacher_loop(cfg: DictConfig):
                 # print("sub proposal")
                 prompt = 'Conj:(hard,useful,few_zeros) '
                 if(np.random.random() > 0.5 and len(proven_conjectures) > 0):
-                    seed = np.random.choice(proven_conjectures) + "->"
+                    seed = "[('a0 : " + np.random.choice(proven_conjectures) + ") -> "
                 else:
                     seed = None
 

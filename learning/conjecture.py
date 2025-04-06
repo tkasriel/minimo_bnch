@@ -403,15 +403,21 @@ MAX_OPEN_PARENS = 8
 
 def sample_conjecture(lm, context: Context, seed = None, max_it=100) -> str | None:
     generation = ''
+    generation_no_seed = ''
 
     if(seed):
         generation = seed
     
     for i in range(max_it):
         tokens = tokenize(generation)
-        node, _, completions = Conjecture.parse(tokens, context.clone(), seed)
+        node, _, completions = Conjecture.parse(tokens, context.clone())
         if node:
-            return generation
+            # ex: 
+            # generation =          [('a0: (= z z)) -> (= o o)]
+            # generation_no_seed =  (= o o)]
+            if not ":" in generation_no_seed and generation_no_seed[-1] == "]":
+                return generation_no_seed[:-1]
+            return generation_no_seed
         
         completions = list(set(space_completions(generation, completions)))
         choice = ''
@@ -432,6 +438,7 @@ def sample_conjecture(lm, context: Context, seed = None, max_it=100) -> str | No
 
             # Add the maximum common prefix to the generation, which doesn't need the LM.
             generation += completions[0][:max_common_prefix_len]
+            generation_no_seed += completions[0][:max_common_prefix_len]
             completions = [c[max_common_prefix_len:] for c in completions]
 
             if '' in completions:
@@ -442,6 +449,7 @@ def sample_conjecture(lm, context: Context, seed = None, max_it=100) -> str | No
             choice = random.choices(choices, list(map(math.exp,
                                                       lm.score(choices, mean=False, prefix=generation))))[0]
             generation += choice
+            generation_no_seed += choice
             # Filter completions to those starting with the chosen character and drop the character.
             completions = [c[1:] for c in completions if c.startswith(choice)]
             # print(generation)
