@@ -22,6 +22,7 @@ class StudentResult:
     error: Optional[str]
     success: bool
     problem: str
+    problem_no_seed: str
     solution_actions: Optional[list[str]]
     proof: Optional[list[str]]
     extracted_examples: list[str]
@@ -45,19 +46,19 @@ app.conf.worker_max_memory_per_child = 1e9
 app.conf.accept_content = ['application/json', 'application/x-python-serialize']
 
 
-def try_prove(agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, statement: str) -> StudentResult:
+def try_prove(agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, statement: tuple[str, str]) -> StudentResult:
     # print(f"worker, curr allocated (init): {torch.cuda.memory_allocated()}")
 
-    print('Proving', statement, 'on', agent._policy._lm._lm.device)
+    print('Proving', statement[0], 'on', agent._policy._lm._lm.device)
     curr_time = time.time()
     state = peano.PyProofState(theory.theory,
                                theory.premises,
-                               statement)
+                               statement[0])
     print(f"Instantiating peano state took {time.time()-curr_time:02.1f}s")
     curr_time = time.time()
 
     try:
-        agent_result = agent.proof_search(statement, state)
+        agent_result = agent.proof_search(statement[0], state)
         print(f"Proof search took {time.time()-curr_time:02.1f}s")
         curr_time = time.time()
 
@@ -89,7 +90,7 @@ def try_prove(agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, sta
         return StudentResult(
             None,
             agent_result.success,
-            statement,
+            *statement,
             list(map(str, solution_actions)) if solution_actions else None,
             proof,
             agent_result.examples,
@@ -103,5 +104,5 @@ def try_prove(agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, sta
         tb = traceback.format_exception(e)
         print('Error in try_prove!')
         print(tb)
-        return StudentResult(tb, False, statement, None, None, [],
+        return StudentResult(tb, False, *statement, None, None, [],
                              None, None, None)

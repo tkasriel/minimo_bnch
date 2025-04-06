@@ -407,6 +407,7 @@ def sample_conjecture(lm, context: Context, seed = None, max_it=100) -> str | No
 
     if(seed):
         generation = seed
+        
     
     for i in range(max_it):
         tokens = tokenize(generation)
@@ -417,6 +418,8 @@ def sample_conjecture(lm, context: Context, seed = None, max_it=100) -> str | No
             # generation_no_seed =  (= o o)]
             if not ":" in generation_no_seed and generation_no_seed[-1] == "]":
                 return generation_no_seed[:-1]
+            if ":" in generation_no_seed and generation_no_seed[0] != "[":
+                return "[" + generation_no_seed
             return generation_no_seed
         
         completions = list(set(space_completions(generation, completions)))
@@ -439,6 +442,7 @@ def sample_conjecture(lm, context: Context, seed = None, max_it=100) -> str | No
             # Add the maximum common prefix to the generation, which doesn't need the LM.
             generation += completions[0][:max_common_prefix_len]
             generation_no_seed += completions[0][:max_common_prefix_len]
+
             completions = [c[max_common_prefix_len:] for c in completions]
 
             if '' in completions:

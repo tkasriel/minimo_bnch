@@ -121,27 +121,34 @@ async def teacher_loop(cfg: DictConfig):
 
             progress_bar = tqdm(total=cfg.n_conjectures)
 
-            conjectures: list[str] = []
+            conjectures: list[tuple[str, str]] = []
 
             while len(conjectures) < cfg.n_conjectures:
                 # print("sub proposal")
-                prompt = 'Conj:(hard,useful,few_zeros) '
+                prompt = 'Conj:(hard,useful) '
                 if(np.random.random() > 0.5 and len(proven_conjectures) > 0):
                     seed = "[('a0 : " + np.random.choice(proven_conjectures) + ") -> "
                 else:
                     seed = None
 
-                # seed = "[('a0 : (= nat (s (s (s z))) z)) -> (= nat z z) -> "
-                proposal = sample_conjecture(AgentLM(agent, prompt), context, seed = seed)
+                generated_induced_conjecture = sample_conjecture(AgentLM(agent, prompt), context, seed = seed)
+                if not generated_induced_conjecture:
+                    # too many tokens used
+                    continue
+                if seed and generated_induced_conjecture[0] == "[":
+                    proposal = seed + generated_induced_conjecture[1:]
+                else:
+                    proposal = (seed if seed else "") + generated_induced_conjecture
                 #print(proposal)
 
                 if proposal and proposal not in conjectures + proven_conjectures:
                     # Contract conjectures to make them Peano-parseable.
-                    contracted_proposal = d.contract(proposal)
-                    if contracted_proposal not in conjectures + proven_conjectures:
-                        conjectures.append(contracted_proposal)
+                    contracted_proposal: str = d.contract(proposal)
+                    contracted_conjecture: str = d.contract(generated_induced_conjecture)
+                    if contracted_conjecture not in conjectures + proven_conjectures:
+                        conjectures.append((contracted_proposal, contracted_conjecture))
                         progress_bar.update(1)
-
+                
             progress_bar.close()
 
 
@@ -264,7 +271,7 @@ async def teacher_loop(cfg: DictConfig):
                     
                     examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
                 if student_result.success:
-                    proven_conjectures.append(student_result.problem)
+                    proven_conjectures.append(student_result.problem_no_seed)
                     proofs.append(student_result.proof)
 
                 examples.extend(student_result.extracted_examples)
