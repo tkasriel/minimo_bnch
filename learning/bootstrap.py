@@ -137,8 +137,10 @@ async def teacher_loop(cfg: DictConfig):
                     continue
                 if seed and generated_induced_conjecture[0] == "[":
                     proposal = seed + generated_induced_conjecture[1:]
+                elif seed:
+                    proposal = seed + generated_induced_conjecture + "]"
                 else:
-                    proposal = (seed if seed else "") + generated_induced_conjecture
+                    proposal = seed
                 #print(proposal)
 
                 if proposal and proposal not in conjectures + proven_conjectures:
