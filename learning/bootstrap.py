@@ -59,6 +59,8 @@ async def teacher_loop(cfg: DictConfig):
     d = peano.PyDerivation()
     d.incorporate(theory)
     proven_conjectures = []
+    comp_to_raw_dict = {}
+    seed_used = {}
     seen_hindsight_goals = set()
     proofs = []
     outcomes = []
@@ -111,7 +113,10 @@ async def teacher_loop(cfg: DictConfig):
                 # print("sub proposal")
                 prompt = 'Conj:(hard,useful,few_zeros) '
                 if(np.random.random() > 0.5 and len(proven_conjectures) > 0):
-                    seed = np.random.choice(proven_conjectures)[:-1] + " -> "
+                    seed_conj = np.random.choice(proven_conjectures)
+                    seed_conj = comp_to_raw_dict[str(seed_conj)]
+
+                    seed = seed_conj[:-1] + " -> "
                 else:
                     seed = None
 
@@ -124,6 +129,9 @@ async def teacher_loop(cfg: DictConfig):
                     contracted_proposal = d.contract(proposal)
                     #print("contracted: " + str(contracted_proposal))
                     if contracted_proposal not in conjectures + proven_conjectures:
+                        comp_to_raw_dict[str(contracted_proposal)] = proposal
+                        seed_used[str(contracted_proposal)] = bool(seed)
+
                         conjectures.append(contracted_proposal)
                         progress_bar.update(1)
                 # print("prop fini")
@@ -183,10 +191,12 @@ async def teacher_loop(cfg: DictConfig):
 
                 outcomes.append({'iteration': i,
                                 'problem': student_result.problem,
+                                'problem_raw': comp_to_raw_dict[str(student_result.problem)],
                                 'proof': student_result.proof,
                                 'logprob': student_result.logprob,
                                 'actions': student_result.solution_actions,
-                                'hindsight': False
+                                'hindsight': False,
+                                'seed_used': seed_used[str(student_result.problem)]
                                 })
 
                 for h in student_result.hindsight_examples:
