@@ -114,9 +114,15 @@ async def teacher_loop(cfg: DictConfig):
                 prompt = 'Conj:(hard,useful,few_zeros) '
                 if(np.random.random() > 0.5 and len(proven_conjectures) > 0):
                     seed_conj = np.random.choice(proven_conjectures)
-                    seed_conj = comp_to_raw_dict[str(seed_conj)]
-
-                    seed = seed_conj[:-1] + " -> "
+                    if(seed_used[str(seed_conj)]):
+                        seed = None
+                    else:
+                        seed_conj = comp_to_raw_dict[str(seed_conj)]
+                        if(seed_conj[0] != "["):
+                            seed = None
+                        else:
+                            seed = seed_conj[:-1] + " -> "
+                    print(seed)
                 else:
                     seed = None
 
