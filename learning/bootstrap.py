@@ -279,11 +279,11 @@ async def teacher_loop(cfg: DictConfig):
                             examples.extend(h.examples)
                             seen_hindsight_goals.add(h.goal)
 
-                log.write(json.dumps({'iteration': i,
-                                    'msg': f'Training on {len(examples)} examples.'}))
-                log.write('\n')
+            log.write(json.dumps({'iteration': i,
+                                'msg': f'Training on {len(examples)} examples.'}))
+            log.write('\n')
 
-                # 3c- Train model on conjecturing and proof search examples.
+            # 3c- Train model on conjecturing and proof search examples.
             print(len(examples), 'accumulated training examples.')
             agent.train(examples)
             train_end_time = time.time()
