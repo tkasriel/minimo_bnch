@@ -292,7 +292,7 @@ class Arrow(Node):
     output_type: list['Value']
 
     def __str__(self):
-        return '[' + ' -> '.join(map(str, self.input_types + [self.output_type])) + ']'
+        return '[' + ' -> '.join(map(str, self.input_types + self.output_type)) + ']'
 
     @staticmethod
     def parse(tokens: list[str], context, seed = None):
@@ -312,6 +312,7 @@ class Arrow(Node):
         while True:
             if(len(output_type) == 0):
                 decl_node, decl_consumed, decl_completions = Decl.parse(tokens, context)
+                #print("decl: " + str(decl_node))
                 consumed, tokens = consumed + decl_consumed, tokens[decl_consumed:]
 
                 if decl_node:
@@ -332,11 +333,10 @@ class Arrow(Node):
             # Otherwise, also try to parse the output type.
             out_node, out_consumed, out_completions = Value.parse(tokens, context)
             consumed, tokens = consumed + out_consumed, tokens[out_consumed:]
-
+            #print("output: " + str(out_node))
             if out_node:
                 # We parsed all input types and now also the output type.
                 output_type.append(out_node)
-
                 if (not seed):
                     break
                 if tokens and tokens[0] == '->':
@@ -350,7 +350,6 @@ class Arrow(Node):
                 if(out_node):
                     output_type.append(out_node)
                     break
-
             return None, consumed, decl_completions + out_completions
 
         if not tokens:
