@@ -201,6 +201,7 @@ async def teacher_loop(cfg: DictConfig):
                         print(f"Process {res} is done")
                         continue
                     assert res_type == PROOF
+                    print(f"Iteration {i}")
                     print(f"Conjecture: {res.problem}")
                     if res.error:
                         print("Proof search errored.")
@@ -208,8 +209,8 @@ async def teacher_loop(cfg: DictConfig):
                         continue
                     if res.success:
                         assert res.proof
-                        print("Proof search was a success! Proof is")
-                        print("\n\t".join(res.solution_actions))
+                        print("Proof search was a success! Proof actions taken:")
+                        print("\t"+"\n\t".join(res.solution_actions))
                         print(f"logprob: {res.logprob}")
                     else:
                         print("Proof search failed")
