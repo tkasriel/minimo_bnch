@@ -8,6 +8,7 @@ import io
 import json
 import datetime
 import time
+from typing import Any
 
 import hydra
 from omegaconf import DictConfig, ListConfig
@@ -31,29 +32,37 @@ def now() -> str:
 
 
 FAIL = "fail"
-agent=None
-background_theory = None
+CONJECTURE_PROMPT= 'Conj:(hard,useful,few_zeros) '
+STOP = "STOP"
+CONJECTURE = "CONJECTURE"
+PROOF = "PROOF"
 
-def init_pool(a: ProofSearchAgent, b: worker.BackgroundTheory):
-    global agent, background_theory
-    agent = a
-    background_theory = b
+def process_main(id: int, agent: ProofSearchAgent, background_theory: worker.BackgroundTheory, instruction_queue: mp.Queue, output_queue: mp.Queue):
+    instruction: tuple[str,str] = ("","")
+    
+    # Unfortunately PyDerivation is not pickle-able and I don't know enough rust to fix that
+    d = peano.PyDerivation()
+    d.incorporate(background_theory.theory)
+    context = Context(d, None, [])
+    print(f"Process {id} ready")
 
-
-def submit_task(statement: str, verbose=False):
-    global agent, background_theory
-    assert agent is not None
-    assert background_theory is not None
-    return worker.try_prove(agent, background_theory, statement, verbose)
-
-
-# def get_task_result(task: mp.Process) -> StudentResult:
-#     return task.join()
+    while instruction[0] != STOP:
+        instruction = instruction_queue.get()
+        # print(f"Received instruction: {instruction}")
+        if instruction and type(instruction) is tuple:
+            if instruction[0] == CONJECTURE:
+                new_conj = sample_conjecture(AgentLM(agent, CONJECTURE_PROMPT), context)
+                output_queue.put((CONJECTURE, new_conj))
+            elif instruction[0] == PROOF:
+                thm_to_prove = instruction[1]
+                result = worker.try_prove(agent, background_theory, thm_to_prove, verbose=False)
+                output_queue.put((PROOF, result))
+    output_queue.put((STOP, id))
 
 
 async def teacher_loop(cfg: DictConfig):
-    if cfg.get("use_multiprocessing"):
-        mp.set_start_method(cfg.get("mp_start_method"))
+    if cfg.use_multiprocessing:
+        mp.set_start_method(cfg.mp_start_method)
     agent = make_agent(cfg)
     theory_folder = "theories"
     if "output" in os.path.abspath(__file__):
@@ -113,17 +122,38 @@ async def teacher_loop(cfg: DictConfig):
             torch.save(agent, f'{i}.pt')
             print(f"current it: {i}")
             context = Context(d, None, [])
+            background_theory = worker.BackgroundTheory(theory, premises)
+            num_processes = cfg.num_processes
+
+            # Start multiprocessing
+            if cfg.use_multiprocessing:
+                instruction_queue: mp.Queue = mp.Queue()
+                output_queue: mp.Queue = mp.Queue()
+                processes: list[mp.Process] = []
+                agent.share_memory()
+                for j in range(num_processes):
+                    new_process = mp.Process(target=process_main,kwargs={"id": j,
+                                                                         "agent":agent, 
+                                                                         "background_theory": background_theory, 
+                                                                         "instruction_queue": instruction_queue, 
+                                                                         "output_queue": output_queue})
+                    new_process.start()
+                    processes.append(new_process)
+
             # 1- Run conjecturing model to obtain N conjectures.
             print(now(), f'Iteration #{i}: making conjectures...')
-
             progress_bar = tqdm(total=cfg.n_conjectures)
-
-            conjectures = []
+            conjectures: list[str] = []
+            if cfg.use_multiprocessing:
+                for j in range(min(num_processes, cfg.n_conjectures)):
+                    instruction_queue.put((CONJECTURE, "")) # You can put the seed statement here
 
             while len(conjectures) < cfg.n_conjectures:
-                # print("sub proposal")
-                proposal = sample_conjecture(AgentLM(agent, 'Conj:(hard,useful,few_zeros) '), context)
-                # print(proposal)
+                if cfg.use_multiprocessing:
+                    _, proposal = output_queue.get()
+                    instruction_queue.put((CONJECTURE, ""))
+                else:
+                    proposal = sample_conjecture(AgentLM(agent, CONJECTURE_PROMPT), context)
 
                 if proposal and proposal not in conjectures + proven_conjectures:
                     # Contract conjectures to make them Peano-parseable.
@@ -131,10 +161,9 @@ async def teacher_loop(cfg: DictConfig):
                     if contracted_proposal not in conjectures + proven_conjectures:
                         conjectures.append(contracted_proposal)
                         progress_bar.update(1)
-                # print("prop fini")
+                
 
             progress_bar.close()
-
 
             print(now(), 'done, have', len(conjectures), 'conjectures')
             print(conjectures)
@@ -144,59 +173,58 @@ async def teacher_loop(cfg: DictConfig):
                                   'conjectures': conjectures}))
             log.write('\n')
             log.flush()
+            end_conjecture_time = time.time()
 
             # 2- Try to prove each of the conjectures
-
-            # Dump current agent.
-            # buff = io.BytesIO()
-            # torch.save(agent, buff)
-            # agent_dump = buff.getvalue()
 
             print('Running proof search...')
             student_results: list[StudentResult] = []
             success_logprobs = []
             examples = []
-            background_theory = worker.BackgroundTheory(theory, premises)
-            if cfg.get("use_multiprocessing"):
-                agent.share_memory()
-                with mp.Pool(processes=cfg.get("num_processes"), initializer=init_pool, initargs=(agent, background_theory)) as p:
-                    print(f"{cfg.get('num_processes')} processes initialized")
-                    for res in tqdm(p.imap_unordered(submit_task, conjectures), total=len(conjectures)):
-                        assert type(res) is StudentResult
-                        print(f"Conjecture: {res.problem}")
-                        if res.error:
-                            print("Proof search errored.")
-                            print(res.error)
-                            continue
-                        if res.success:
-                            assert res.proof
-                            print("Proof search was a success! Proof is")
-                            print("\n\t".join(res.proof))
-                            print(f"logprob: {res.logprob}")
-                        else:
-                            print("Proof search failed")
-                        print(f"Got {len(res.hindsight_examples)} hindsight examples\n")
-                        student_results.append(res)
+            if cfg.use_multiprocessing:
+                # Send the instructions
+                for conjecture in conjectures:
+                    instruction_queue.put((PROOF, conjecture))
+                for j in range(cfg.num_processes):
+                    instruction_queue.put((STOP, ""))
+                
+                # Process results
+                num_dead = 0
+                progress_bar = tqdm(total=len(conjectures))
+                while len(student_results) < len(conjectures) and num_dead < cfg.num_processes:
+                    res_type, res = output_queue.get()
+                    if res_type == CONJECTURE:
+                        # Leftover from conjecturing. We could use them, but for now I'll just throw them out
+                        continue
+                    if res_type == STOP:
+                        num_dead += 1
+                        print(f"Process {res} is done")
+                        continue
+                    assert res_type == PROOF
+                    print(f"Conjecture: {res.problem}")
+                    if res.error:
+                        print("Proof search errored.")
+                        print(res.error)
+                        continue
+                    if res.success:
+                        assert res.proof
+                        print("Proof search was a success! Proof is")
+                        print("\n\t".join(res.proof))
+                        print(f"logprob: {res.logprob}")
+                    else:
+                        print("Proof search failed")
+                    print(f"Got {len(res.hindsight_examples)} hindsight examples\n")
+                    student_results.append(res)
+                    progress_bar.update(1)
+                progress_bar.close()
 
-
+                for process in processes:
+                    process.join()
+                    process.close()
             else:
                 for index, conjecture in enumerate(tqdm(conjectures, miniters=1)):
-                    init_pool(agent, background_theory)
-                    student_results.append(submit_task(conjecture, True))
+                    student_results.append(worker.try_prove(agent, background_theory, conjecture, True))
             end_search_time = time.time()
-
-            # 3- Train model on proofs and outcome of conjectures (easy, hard, timeout)
-            # print('Collecting', len(tasks), 'results from workers.')
-            # for task in tqdm(tasks, miniters=1):
-            #     student_result = get_task_result(task)
-
-            #     if student_result.error:
-            #         print('Error in prover process!')
-            #         print(student_result.error)
-            #         continue
-
-
-                # student_results.append(student_result)
 
             # 3a- Look at all the success logprobs and compute the easy/hard threhsold.
             for student_result in student_results:
@@ -289,7 +317,8 @@ async def teacher_loop(cfg: DictConfig):
             train_end_time = time.time()
             with open("time_metric.txt", "a+") as tm:
                 tm.write(f"Iteration {i}: \n")
-                tm.write(f"Proof search took {end_search_time-start_time}s\n")
+                tm.write(f"Proof search took {end_conjecture_time-start_time}s\n")
+                tm.write(f"Proof search took {end_search_time-end_conjecture_time}s\n")
                 tm.write(f"Training took {train_end_time-end_search_time}s\n")
                 tm.write(f"Total time taken: {train_end_time-start_time}s\n")
 
