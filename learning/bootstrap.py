@@ -209,7 +209,7 @@ async def teacher_loop(cfg: DictConfig):
                     if res.success:
                         assert res.proof
                         print("Proof search was a success! Proof is")
-                        print("\n\t".join(res.proof))
+                        print("\n\t".join(res.solution_actions))
                         print(f"logprob: {res.logprob}")
                     else:
                         print("Proof search failed")
