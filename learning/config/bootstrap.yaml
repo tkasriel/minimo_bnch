@@ -5,8 +5,11 @@ defaults:
     - agent: mcts-lm
     - theory: nat-add
 
-iterations: 10
-n_conjectures: 50
+iterations: 5
+n_conjectures: 200
+use_multiprocessing: true
+num_processes: 8
+mp_start_method: spawn
 
 difficulty_buckets:
     - hard: 20

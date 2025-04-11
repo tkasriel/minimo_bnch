@@ -44,17 +44,17 @@ app.conf.worker_max_memory_per_child = 1e9
 app.conf.accept_content = ['application/json', 'application/x-python-serialize']
 
 
-def try_prove(agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, statement: str) -> StudentResult:
+def try_prove(agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, statement: str, verbose: bool = False) -> StudentResult:
     # print(f"worker, curr allocated (init): {torch.cuda.memory_allocated()}")
 
-    print('Proving', statement, 'on', agent._policy._lm._lm.device)
+    # print('Proving', statement, 'on', agent._policy._lm._lm.device)
 
     state = peano.PyProofState(theory.theory,
                                theory.premises,
                                statement)
 
     try:
-        agent_result = agent.proof_search(statement, state)
+        agent_result = agent.proof_search(statement, state, verbose)
 
         if agent_result.success:
             proof = agent_result.root.state_node.reconstruct_proof(
