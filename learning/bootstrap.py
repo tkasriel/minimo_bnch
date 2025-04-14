@@ -152,7 +152,7 @@ async def teacher_loop(cfg: DictConfig):
                 if(np.random.random() > 0.5 and len(proven_conjectures) > 0):
                     seed_conj = np.random.choice(proven_conjectures)
                     seed_conj = comp_to_raw_dict[str(seed_conj)]
-                    max_var_count = max([int(i[2:]) for i in re.findall("'a\d+", seed_conj)])
+                    max_var_count = max([int(i[2:]) for i in re.findall("'a\\d+", seed_conj)])
 
                     decl_clauses, last_clause = seed_conj.split("->")[:-1], seed_conj.split("->")[-1][:-1]
                     last_clause = f" ('a{max_var_count + 1} : {last_clause})]"
@@ -169,12 +169,12 @@ async def teacher_loop(cfg: DictConfig):
 
             while len(conjectures) < cfg.n_conjectures:
                 if cfg.use_multiprocessing:
-                    _, proposal, seed_used = output_queue.get()
+                    _, proposal, seed_used_cur = output_queue.get()
                     instruction_queue.put((CONJECTURE, get_seed_statement()))
                 else:
                     seed = get_seed_statement()
                     proposal = sample_conjecture(AgentLM(agent, CONJECTURE_PROMPT), context, seed=seed)
-                    seed_used = bool(seed)
+                    seed_used_cur = bool(seed)
 
                 if proposal and proposal not in conjectures + proven_conjectures:
                     # Contract conjectures to make them Peano-parseable.
@@ -182,7 +182,7 @@ async def teacher_loop(cfg: DictConfig):
                     #print("contracted: " + str(contracted_proposal))
                     if contracted_proposal not in conjectures + proven_conjectures:
                         comp_to_raw_dict[str(contracted_proposal)] = proposal
-                        seed_used[str(contracted_proposal)] = bool(seed_used)
+                        seed_used[str(contracted_proposal)] = bool(seed_used_cur)
 
                         conjectures.append(contracted_proposal)
                         progress_bar.update(1)
