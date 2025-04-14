@@ -25,7 +25,7 @@ from hindsight import HindsightExample  # noqa
 from util import format_blocks_with_indent, sample_batch, setup_wandb, value_color, save_json
 from conjecture import AgentLM, Context, sample_conjecture
 from proofsearch import ProofSearchAgent, make_agent
-
+import re
 
 def now() -> str:
     return '[' + datetime.datetime.now().isoformat() + ']'
@@ -57,8 +57,8 @@ def process_main(id: int, agent: ProofSearchAgent, background_theory: worker.Bac
             elif instruction[0] == PROOF:
                 thm_to_prove = instruction[1]
                 result = worker.try_prove(agent, background_theory, thm_to_prove, verbose=False)
-                output_queue.put((PROOF, result))
-    output_queue.put((STOP, id))
+                output_queue.put((PROOF, result, None))
+    output_queue.put((STOP, id, None))
 
 
 async def teacher_loop(cfg: DictConfig):
@@ -151,14 +151,13 @@ async def teacher_loop(cfg: DictConfig):
             def get_seed_statement():
                 if(np.random.random() > 0.5 and len(proven_conjectures) > 0):
                     seed_conj = np.random.choice(proven_conjectures)
-                    if(seed_used[str(seed_conj)]):
-                        seed = ""
-                    else:
-                        seed_conj = comp_to_raw_dict[str(seed_conj)]
-                        if(seed_conj[0] != "["):
-                            seed = ""
-                        else:
-                            seed = seed_conj[:-1] + " -> "
+                    seed_conj = comp_to_raw_dict[str(seed_conj)]
+                    max_var_count = max([int(i[2:]) for i in re.findall("'a\d+", seed_conj)])
+
+                    decl_clauses, last_clause = seed_conj.split("->")[:-1], seed_conj.split("->")[-1][:-1]
+                    last_clause = f" ('a{max_var_count + 1} : {last_clause})]"
+
+                    seed = "->".join(decl_clauses + last_clause)
                 else:
                     seed = ""
                 print(seed)
@@ -218,7 +217,7 @@ async def teacher_loop(cfg: DictConfig):
                 num_dead = 0
                 progress_bar = tqdm(total=len(conjectures))
                 while len(student_results) < len(conjectures) and num_dead < cfg.num_processes:
-                    res_type, res = output_queue.get()
+                    res_type, res, _ = output_queue.get()
                     if res_type == CONJECTURE:
                         # Leftover from conjecturing. We could use them, but for now I'll just throw them out
                         continue

@@ -310,20 +310,18 @@ class Arrow(Node):
         output_type = []
 
         while True:
-            if(len(output_type) == 0):
-                decl_node, decl_consumed, decl_completions = Decl.parse(tokens, context)
-                #print("decl: " + str(decl_node))
-                consumed, tokens = consumed + decl_consumed, tokens[decl_consumed:]
+            decl_node, decl_consumed, decl_completions = Decl.parse(tokens, context)
+            consumed, tokens = consumed + decl_consumed, tokens[decl_consumed:]
 
-                if decl_node:
-                    input_types.append(decl_node)
+            if decl_node:
+                input_types.append(decl_node)
 
-                    if tokens and tokens[0] == '->':
-                        tokens = tokens[1:]
-                    else:
-                        return None, consumed, [' -> ']
+                if tokens and tokens[0] == '->':
+                    tokens = tokens[1:]
+                else:
+                    return None, consumed, [' -> ']
 
-                    continue
+                continue
 
             # If either this is the first element of the arrow (empty input_types)
             # or we're in the middle of the Decl, return.
@@ -333,23 +331,12 @@ class Arrow(Node):
             # Otherwise, also try to parse the output type.
             out_node, out_consumed, out_completions = Value.parse(tokens, context)
             consumed, tokens = consumed + out_consumed, tokens[out_consumed:]
-            #print("output: " + str(out_node))
+
             if out_node:
                 # We parsed all input types and now also the output type.
-                output_type.append(out_node)
-                if (not seed):
-                    break
-                if tokens and tokens[0] == '->':
-                    tokens = tokens[1:]
-                else:
-                    return None, consumed, out_completions + [' -> ']
+                output_type = out_node
+                break
 
-                out_node, out_consumed, out_completions = Value.parse(tokens, context)
-                consumed, tokens = consumed + out_consumed, tokens[out_consumed:]
-
-                if(out_node):
-                    output_type.append(out_node)
-                    break
             return None, consumed, decl_completions + out_completions
 
         if not tokens:
