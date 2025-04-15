@@ -39,7 +39,8 @@ class TransformerLMPolicy(nn.Module):
                 eos_token_id=EOS,
                 pad_token_id=PAD,
                 n_positions=1024)
-            device = torch.device(0)
+            device_count = torch.cuda.device_count() # Use the first available GPU
+            device = torch.device(f'cuda:{0 % device_count}') #device = torch.device(0)
         else:
             # Debugging on a CPU
             cfg = transformers.GPT2Config(
