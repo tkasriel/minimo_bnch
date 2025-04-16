@@ -10,6 +10,7 @@ import datetime
 import time
 from typing import Any
 
+import gc # for garbage collection
 import hydra
 from omegaconf import DictConfig, ListConfig
 import torch
@@ -57,6 +58,9 @@ def process_main(id: int, agent: ProofSearchAgent, background_theory: worker.Bac
                 thm_to_prove = instruction[1]
                 result = worker.try_prove(agent, background_theory, thm_to_prove, verbose=False)
                 output_queue.put((PROOF, result))
+        gc.collect() # garbage collection
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     output_queue.put((STOP, id))
 
 
@@ -137,6 +141,7 @@ async def teacher_loop(cfg: DictConfig):
                                                                          "background_theory": background_theory, 
                                                                          "instruction_queue": instruction_queue, 
                                                                          "output_queue": output_queue})
+                    new_process.daemon = False # set the process as non-daemon
                     new_process.start()
                     processes.append(new_process)
 
@@ -145,7 +150,9 @@ async def teacher_loop(cfg: DictConfig):
             progress_bar = tqdm(total=cfg.n_conjectures)
             conjectures: list[str] = []
             if cfg.use_multiprocessing:
-                for j in range(min(num_processes, cfg.n_conjectures)):
+                # tune the size of num_processes to keep the processes busy
+                schedule_coeff = 1
+                for j in range(min(num_processes * schedule_coeff, cfg.n_conjectures)):
                     instruction_queue.put((CONJECTURE, "")) # You can put the seed statement here
 
             while len(conjectures) < cfg.n_conjectures:
