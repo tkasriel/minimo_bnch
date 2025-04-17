@@ -157,6 +157,14 @@ async def teacher_loop(cfg: DictConfig):
                     if (max_var_count == -1):
                         return ""
                     decl_clauses, last_clause = seed_conj.split("->")[:-1], seed_conj.split("->")[-1][:-1]
+
+                    #remove trivial clauses (i.e. ones that don't contain variables)
+                    def is_decl_nontrivial(clause):
+                        statement = clause.split(":")[-1]
+                        return ("a" in statement)
+                    
+                    decl_clauses = [clause for clause in decl_clauses if is_decl_nontrivial(clause)]
+
                     last_clause = f" ('a{max_var_count + 1} :{last_clause}) -> "
 
                     seed = "->".join(decl_clauses + [last_clause])
