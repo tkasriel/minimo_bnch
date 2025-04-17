@@ -83,7 +83,7 @@ async def teacher_loop(cfg: DictConfig):
     permanent_deriv = peano.PyDerivation()
     permanent_deriv.incorporate(theory)
     proven_conjectures = []
-    comp_to_raw_dict = {}
+    # comp_to_raw_dict = {}
     seed_used = {}
     seen_hindsight_goals = set()
     proofs = []
@@ -120,7 +120,7 @@ async def teacher_loop(cfg: DictConfig):
                                          o['proof'] is not None]
                 seen_hindsight_goals = {o['problem'] for o in outcomes
                                         if o['hindsight'] and o['proof'] is not None}
-                comp_to_raw_dict = {o['problem']: o['problem_raw'] for o in outcomes if "problem_raw" in o.keys()}
+                # comp_to_raw_dict = {o['problem']: o['problem_raw'] for o in outcomes if "problem_raw" in o.keys()}
             with open(f"generated_theorems_{i-1}.json") as f:
                 thms = json.load(f)
                 useful_theorems = [UsefulConjecture(**thm) for thm in thms]
@@ -184,7 +184,7 @@ async def teacher_loop(cfg: DictConfig):
                     seed = "->".join(decl_clauses + [last_clause])
                     seed = seed if "[" in seed else "[" + seed
                 else:
-                    seed = ""
+                    seed = None
                 #print(seed)
                 return seed
 
@@ -313,7 +313,6 @@ async def teacher_loop(cfg: DictConfig):
 
                 outcomes.append({'iteration': i,
                                 'problem': student_result.problem,
-                                'problem_raw': comp_to_raw_dict[str(student_result.problem)],
                                 'proof': student_result.proof,
                                 'logprob': student_result.logprob,
                                 'actions': student_result.solution_actions,

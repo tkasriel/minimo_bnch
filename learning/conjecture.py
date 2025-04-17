@@ -403,10 +403,10 @@ def sample_conjecture(lm, context: Context, seed = None, max_it=100) -> str | No
             # ex: 
             # generation =          [('a0: (= z z)) -> (= o o)]
             # generation_no_seed =  (= o o)]
-            if not ":" in generation_no_seed and generation_no_seed[-1] == "]":
-                return generation_no_seed[:-1]
-            if ":" in generation_no_seed and generation_no_seed[0] != "[":
-                return "[" + generation_no_seed
+            # if not ":" in generation_no_seed and generation_no_seed[-1] == "]":
+            #     return generation_no_seed[:-1]
+            # if ":" in generation_no_seed and generation_no_seed[0] != "[":
+            #     return "[" + generation_no_seed
             return generation
         
         completions = list(set(space_completions(generation, completions)))
