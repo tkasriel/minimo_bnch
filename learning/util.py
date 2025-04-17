@@ -17,6 +17,8 @@ import numpy as np
 from omegaconf import DictConfig, OmegaConf, open_dict
 from tqdm import tqdm
 
+ALLOW_PROP_AS_TYPE = False
+
 
 PAD = 0
 BOS = 1
@@ -372,3 +374,13 @@ def translate_object(obj, translations):
         return translations.get(obj, obj)
     else:
         return obj
+
+
+def verify_action(action) -> bool:
+    action_str = str(action)
+    if "=>" in action_str:
+        action_str = action_str[2:]
+    arrow_sep = action_str.split(" -> ")
+    if len(arrow_sep) > 1:
+        return all(verify_action(a) for a in arrow_sep)
+    return action_str.count("=") <= 1 or ALLOW_PROP_AS_TYPE

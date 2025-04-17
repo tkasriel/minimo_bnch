@@ -8,7 +8,7 @@ import re
 import math
 
 import peano
-from util import batch_inference
+from util import batch_inference, ALLOW_PROP_AS_TYPE
 
 
 # Grammar for conjectures:
@@ -18,9 +18,6 @@ from util import batch_inference
 # Atom := name
 # Decl := "(" Atom ":" Type ")"
 # Arrow := "[" decl* Prop "]"
-
-
-ALLOW_PROP_AS_TYPE = False
 
 
 @dataclass

@@ -18,7 +18,7 @@ import json
 import peano
 import problems
 import policy
-from util import format_blocks_with_indent, sample_batch, setup_wandb, value_color, tqdm_if
+from util import format_blocks_with_indent, sample_batch, setup_wandb, value_color, tqdm_if, verify_action
 from action import ProofAction
 
 
@@ -216,7 +216,7 @@ class HolophrasmNode(ProofStateNode):
 
         # Single state: actually list out actions from Peano.
         if HolophrasmNode.EAGER_NODES:
-            peano_actions = list(self._proof_states[0].actions())
+            peano_actions = list(filter(verify_action, self._proof_states[0].actions()))
             eager_actions = []
 
             for a in peano_actions:
@@ -231,7 +231,7 @@ class HolophrasmNode(ProofStateNode):
             return eager_actions
         else:
             # Lazy nodes - straight actions from Peano.
-            return [ProofAction([a]) for a in self._proof_states[0].actions()]
+            return [ProofAction([a]) for a in self._proof_states[0].actions() if verify_action(a)]
 
     def goal(self) -> str:
         if self.is_terminal():
