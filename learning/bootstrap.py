@@ -170,7 +170,7 @@ async def teacher_loop(cfg: DictConfig):
                 if(np.random.random() > 0.5 and len(proven_conjectures) > 0):
                     # seed_conj = "[('a0: nat) -> ('a1: (= 'a0 z)) -> (= (s 'a0) o)]"
                     seed_conj = np.random.choice(proven_conjectures)
-                    seed_conj = comp_to_raw_dict[str(seed_conj)]
+                    # seed_conj = comp_to_raw_dict[str(seed_conj)]
                     matches = re.findall("'a\\d+", seed_conj)
                     if matches:
                         max_var_count = max(int(i[2:]) for i in matches)
@@ -182,6 +182,7 @@ async def teacher_loop(cfg: DictConfig):
                     last_clause = f" ('a{max_var_count + 1} : {last_clause}) "
 
                     seed = "->".join(decl_clauses + [last_clause])
+                    seed = seed if "[" in seed else "[" + seed
                 else:
                     seed = ""
                 #print(seed)
@@ -205,7 +206,7 @@ async def teacher_loop(cfg: DictConfig):
                     contracted_proposal = d.contract(proposal)
                     #print("contracted: " + str(contracted_proposal))
                     if contracted_proposal not in conjectures + proven_conjectures:
-                        comp_to_raw_dict[str(contracted_proposal)] = proposal
+                        # comp_to_raw_dict[str(contracted_proposal)] = proposal
                         seed_used[str(contracted_proposal)] = bool(seed_used_cur)
 
                         conjectures.append(contracted_proposal)

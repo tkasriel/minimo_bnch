@@ -392,6 +392,7 @@ def sample_conjecture(lm, context: Context, seed = None, max_it=100) -> str | No
     generation_no_seed = ''
 
     if(seed):
+        # generation = "[('a0 : nat) -> ('a1 : (= nat z z)) "
         generation = seed
         
     
@@ -406,7 +407,7 @@ def sample_conjecture(lm, context: Context, seed = None, max_it=100) -> str | No
                 return generation_no_seed[:-1]
             if ":" in generation_no_seed and generation_no_seed[0] != "[":
                 return "[" + generation_no_seed
-            return generation_no_seed
+            return generation
         
         completions = list(set(space_completions(generation, completions)))
         choice = ''
