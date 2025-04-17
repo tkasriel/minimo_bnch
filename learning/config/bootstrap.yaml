@@ -5,8 +5,8 @@ defaults:
     - agent: mcts-lm
     - theory: nat-add
 
-iterations: 5
-n_conjectures: 200
+iterations: 10
+n_conjectures: 50
 use_multiprocessing: true
 num_processes: 8
 mp_start_method: spawn
