@@ -120,6 +120,7 @@ async def teacher_loop(cfg: DictConfig):
                                          o['proof'] is not None]
                 seen_hindsight_goals = {o['problem'] for o in outcomes
                                         if o['hindsight'] and o['proof'] is not None}
+                comp_to_raw_dict = {o['problem']: o['problem_raw'] for o in outcomes if "problem_raw" in o.keys()}
             with open(f"generated_theorems_{i-1}.json") as f:
                 thms = json.load(f)
                 useful_theorems = [UsefulConjecture(**thm) for thm in thms]
