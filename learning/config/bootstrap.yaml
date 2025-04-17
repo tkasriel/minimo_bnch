@@ -5,7 +5,7 @@ defaults:
     - agent: mcts-lm
     - theory: nat-add
 
-iterations: 5
+iterations: 10
 n_conjectures: 200
 use_multiprocessing: true
 num_processes: 8

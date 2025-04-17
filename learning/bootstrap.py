@@ -152,15 +152,17 @@ async def teacher_loop(cfg: DictConfig):
                 if(np.random.random() > 0.5 and len(proven_conjectures) > 0):
                     seed_conj = np.random.choice(proven_conjectures)
                     seed_conj = comp_to_raw_dict[str(seed_conj)]
-                    max_var_count = max([int(i[2:]) for i in re.findall("'a\\d+", seed_conj)])
-
+                    print("seed:" + seed_conj)
+                    max_var_count = max([int(i[2:]) for i in re.findall("'a\\d+", seed_conj)] + [-1])
+                    if (max_var_count == -1):
+                        return ""
                     decl_clauses, last_clause = seed_conj.split("->")[:-1], seed_conj.split("->")[-1][:-1]
-                    last_clause = f" ('a{max_var_count + 1} : {last_clause})]"
+                    last_clause = f" ('a{max_var_count + 1} :{last_clause}) -> "
 
-                    seed = "->".join(decl_clauses + last_clause)
+                    seed = "->".join(decl_clauses + [last_clause])
                 else:
                     seed = ""
-                print(seed)
+                print("seed output:" + seed)
                 return seed
 
             if cfg.use_multiprocessing:
