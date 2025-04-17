@@ -1,8 +1,6 @@
-python3 -m venv .venv
-source .venv/bin/activate
-pip3 install maturin
+conda install maturin
 cd environment
 maturin dev --release
 cargo build --bin peano --release
 cd ../learning
-pip3 install -r requirements.txt
+pip install -r requirements.txt

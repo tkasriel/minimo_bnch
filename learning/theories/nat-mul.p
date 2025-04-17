@@ -1,12 +1,14 @@
-= : [('t : type) -> 't -> 't -> prop].
-
+= : [nat -> nat -> prop].
 nat : type.
 
 z : nat.
 s : [nat -> nat].
+o : nat.
 
 + : [nat -> nat -> nat].
 * : [nat -> nat -> nat].
+
+o_s : (= o (s z)).
 
 +_z : [('n : nat) -> (= (+ 'n z) 'n)].
 +_s : [('n : nat) -> ('m : nat) -> (= (+ 'n (s 'm)) (s (+ 'n 'm)))].

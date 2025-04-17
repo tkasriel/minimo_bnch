@@ -363,7 +363,7 @@ empty : type.
     return ProblemSet(
         nng_theory,
         ['eq_symm', 'eq_refl', 'rewrite', 'nat_ind', '+_z', '+_s'],
-        nng_problems + remaining_problems,
+        nng_problems
     )
 
 
@@ -373,3 +373,7 @@ def load_problemset(problemset_id) -> ProblemSet:
     elif problemset_id in ('natural-number-game', 'nng'):
         return load_natural_number_game_problemset()
     raise ValueError(f'Unknown problem set {problemset_id}')
+
+if __name__ == "__main__":
+    conjectures = [x[1] for x in load_natural_number_game_problemset()._statements.values()]
+    print(conjectures)

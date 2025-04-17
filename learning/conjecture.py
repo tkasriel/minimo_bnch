@@ -20,8 +20,24 @@ from util import batch_inference
 # Arrow := "[" decl* Prop "]"
 
 
-ALLOW_PROP_AS_TYPE = True
+ALLOW_PROP_AS_TYPE = False
 
+class UsefulConjecture:
+    theorem: str
+    iter_generated: int
+    freq_used: int
+
+    def __init__(self, theorem: str, iter_generated: str | int, freq_used: str | int):
+        self.theorem = theorem
+        self.iter_generated = int(iter_generated)
+        self.freq_used = int(freq_used)
+    
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "theorem": self.theorem,
+            "iter_generated": str(self.iter_generated),
+            "freq_used": str(self.freq_used),
+        }
 
 @dataclass
 class Context:
@@ -55,8 +71,8 @@ class Conjecture(Node):
     prop: 'Prop'
 
     @staticmethod
-    def parse(tokens: list[str], context):
-        return Prop.parse(tokens, context)
+    def parse(tokens: list[str], context, seed = None):
+        return Prop.parse(tokens, context, seed = seed)
 
     def __str__(self):
         return str(self.prop)
@@ -67,7 +83,7 @@ class Prop(Node):
     prop: Union['App', 'Arrow', 'Atom']
 
     @staticmethod
-    def parse(tokens: list[str], context):
+    def parse(tokens: list[str], context, seed = None):
         context = context.with_target_type('prop')
         node, consumed, completions = App.parse(tokens, context)
 
@@ -79,7 +95,7 @@ class Prop(Node):
         if consumed:
             return node, consumed, completions_atom
 
-        node_a, consumed_a, completions_a = Arrow.parse(tokens, context)
+        node_a, consumed_a, completions_a = Arrow.parse(tokens, context, seed)
         return node_a, consumed_a, completions + completions_atom + completions_a
 
     def __str__(self):
@@ -289,13 +305,13 @@ class Decl(Node):
 @dataclass
 class Arrow(Node):
     input_types: list['Decl']
-    output_type: 'Value'
+    output_type: list['Value']
 
     def __str__(self):
-        return '[' + ' -> '.join(map(str, self.input_types + [self.output_type])) + ']'
+        return '[' + ' -> '.join(map(str, self.input_types + self.output_type)) + ']'
 
     @staticmethod
-    def parse(tokens: list[str], context):
+    def parse(tokens: list[str], context, seed = None):
         consumed = 0
 
         if not tokens:
@@ -307,7 +323,7 @@ class Arrow(Node):
             return None, 0, []
 
         input_types = []
-        output_type = None
+        output_type = []
 
         while True:
             decl_node, decl_consumed, decl_completions = Decl.parse(tokens, context)
@@ -371,18 +387,28 @@ def pretty_print_conjecture(conjecture: str) -> str:
 
 MAX_OPEN_PARENS = 8
 
-def sample_conjecture(lm, context, max_it=100):
+def sample_conjecture(lm, context: Context, seed = None, max_it=100) -> str | None:
     generation = ''
+    generation_no_seed = ''
 
-    for _ in range(max_it):
+    if(seed):
+        generation = seed
+        
+    
+    for i in range(max_it):
         tokens = tokenize(generation)
         node, _, completions = Conjecture.parse(tokens, context.clone())
-
         if node:
-            return generation
-
+            # ex: 
+            # generation =          [('a0: (= z z)) -> (= o o)]
+            # generation_no_seed =  (= o o)]
+            if not ":" in generation_no_seed and generation_no_seed[-1] == "]":
+                return generation_no_seed[:-1]
+            if ":" in generation_no_seed and generation_no_seed[0] != "[":
+                return "[" + generation_no_seed
+            return generation_no_seed
+        
         completions = list(set(space_completions(generation, completions)))
-
         choice = ''
 
         while choice not in completions:
@@ -401,6 +427,8 @@ def sample_conjecture(lm, context, max_it=100):
 
             # Add the maximum common prefix to the generation, which doesn't need the LM.
             generation += completions[0][:max_common_prefix_len]
+            generation_no_seed += completions[0][:max_common_prefix_len]
+
             completions = [c[max_common_prefix_len:] for c in completions]
 
             if '' in completions:
@@ -411,8 +439,10 @@ def sample_conjecture(lm, context, max_it=100):
             choice = random.choices(choices, list(map(math.exp,
                                                       lm.score(choices, mean=False, prefix=generation))))[0]
             generation += choice
+            generation_no_seed += choice
             # Filter completions to those starting with the chosen character and drop the character.
             completions = [c[1:] for c in completions if c.startswith(choice)]
+            # print(generation)
 
     return None
 

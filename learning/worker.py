@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import time
+import gc
 import io
 from dataclasses import dataclass
 from typing import Optional
@@ -38,22 +40,27 @@ redis_url = f'redis://{os.environ.get("REDIS", "localhost")}'
 app = Celery('worker', backend=redis_url, broker=redis_url)
 app.conf.task_serializer = 'pickle'
 app.conf.result_serializer = 'pickle'
+app.conf.worker_max_tasks_per_child = 10
+app.conf.worker_max_memory_per_child = 1e9
 app.conf.accept_content = ['application/json', 'application/x-python-serialize']
 
 
-@app.task
-def try_prove(agent_dump: bytes, theory: BackgroundTheory, statement: str) -> StudentResult:
-    with io.BytesIO(agent_dump) as f:
-        agent = torch.load(f)
+def try_prove(agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, statement: str, verbose: bool = False) -> StudentResult:
+    # print(f"worker, curr allocated (init): {torch.cuda.memory_allocated()}")
 
-    print('Proving', statement, 'on', agent._policy._lm._lm.device)
-
+    # print('Proving', statement[0], 'on', agent._policy._lm._lm.device)
+    curr_time = time.time()
     state = peano.PyProofState(theory.theory,
                                theory.premises,
                                statement)
 
+    #print(f"Instantiating peano state took {time.time()-curr_time:02.1f}s")
+    curr_time = time.time()
+
     try:
-        agent_result = agent.proof_search(statement, state)
+        agent_result = agent.proof_search(statement, state, verbose)
+        print(f"Proof search took {time.time()-curr_time:02.1f}s")
+        curr_time = time.time()
 
         if agent_result.success:
             proof = agent_result.root.state_node.reconstruct_proof(
@@ -62,7 +69,9 @@ def try_prove(agent_dump: bytes, theory: BackgroundTheory, statement: str) -> St
             logprob = agent_result.root.solution_logprob_under_policy(agent._policy, solution_actions)
         else:
             solution_actions, proof, logprob = None, None, None
+        #print(f"Getting results took {time.time()-curr_time:02.1f}s")
 
+        curr_time = time.time()
         examples = []
         # Policy examples for the proved goal.
         examples.extend(agent._policy.extract_examples(root=agent_result.root))
@@ -72,6 +81,12 @@ def try_prove(agent_dump: bytes, theory: BackgroundTheory, statement: str) -> St
                 theory.theory,
                 theory.premises,
                 agent._policy)
+        # print(f"worker, curr allocated (pre-del): {torch.cuda.memory_allocated()}")
+        # print(f"worker, curr allocated (post-del): {torch.cuda.memory_allocated()}")
+        #print(f"Got {len(hindsight_examples)} examples")
+        #print(f"Extracting examples took {time.time()-curr_time:02.1f}s")
+        curr_time = time.time()
+
 
         return StudentResult(
             None,
@@ -85,6 +100,8 @@ def try_prove(agent_dump: bytes, theory: BackgroundTheory, statement: str) -> St
             logprob,
         )
     except BaseException as e:
+        if type(e) == KeyboardInterrupt:
+            raise KeyboardInterrupt()
         tb = traceback.format_exception(e)
         print('Error in try_prove!')
         print(tb)
