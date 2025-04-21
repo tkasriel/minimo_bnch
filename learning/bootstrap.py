@@ -180,16 +180,17 @@ async def teacher_loop(cfg: DictConfig):
                     #max_var_count = max([int(i[2:]) for i in re.findall("'a\\d+", seed_conj)])
 
                     decl_clauses, last_clause = seed_conj.split("->")[:-1], seed_conj.split("->")[-1][:-1]
-                    last_clause = f" ('a{max_var_count + 1} : {last_clause}) "
+                    last_clause = f" ('a{max_var_count + 1} :{last_clause}) "
 
                     def is_decl_relevant(clause):
                         statement = clause.split(":")[-1]
-                        return ("a" in statement)
+                        return ("'a" in statement or statement[:4] == " nat")
                     
                     decl_clauses = [clause for clause in decl_clauses if is_decl_relevant(clause)]
 
                     seed = "->".join(decl_clauses + [last_clause])
                     seed = seed if "[" in seed else "[" + seed
+                    return seed
                 else:
                     seed = None
                 #print(seed)
