@@ -192,6 +192,7 @@ async def teacher_loop(cfg: DictConfig):
                 recombined =  "->".join(decl_clauses + [last_clause])
 
                 recombined = recombined if "[" in recombined else "[" + recombined
+                recombined = recombined if "]" in recombined else recombined + "]"
 
                 return renumber_var_names(recombined)
 
