@@ -167,6 +167,33 @@ async def teacher_loop(cfg: DictConfig):
             progress_bar = tqdm(total=cfg.n_conjectures)
             conjectures: list[tuple[str, str]] = []
 
+            def renumber_var_names(statement):
+                matches = re.findall("'a\\d+", statement)
+                if matches:
+                    for i in matches:
+                        statement = statement.replace(i, f"[var{i[2:]}]")
+
+                    num_unique = sorted(list(set(matches)))
+
+                    for i, name in enumerate(num_unique):
+                        statement = statement.replace(f"[var{name[2:]}]", f"'a{i}")
+                    return statement
+                else:
+                    return statement
+            
+            def simplify_decls(statement):
+                decl_clauses, last_clause = statement.split("->")[:-1], statement.split("->")[-1]
+
+                def is_decl_relevant(clause):
+                    statement = clause.split(":")[-1]
+                    return ("'a" in statement or statement[:4] == " nat")
+                
+                decl_clauses = [clause for clause in decl_clauses if is_decl_relevant(clause)]
+                recombined =  "->".join(decl_clauses + [last_clause])
+
+                return renumber_var_names(recombined)
+
+
             def get_seed_statement():
                 if(np.random.random() > 0.5 and len(proven_conjectures) > 0):
                     # seed_conj = "[('a0: nat) -> ('a1: (= 'a0 z)) -> (= (s 'a0) o)]"
@@ -182,11 +209,11 @@ async def teacher_loop(cfg: DictConfig):
                     decl_clauses, last_clause = seed_conj.split("->")[:-1], seed_conj.split("->")[-1][:-1]
                     last_clause = f" ('a{max_var_count + 1} :{last_clause}) "
 
-                    def is_decl_relevant(clause):
-                        statement = clause.split(":")[-1]
-                        return ("'a" in statement or statement[:4] == " nat")
+                    # def is_decl_relevant(clause):
+                    #     statement = clause.split(":")[-1]
+                    #     return ("'a" in statement or statement[:4] == " nat")
                     
-                    decl_clauses = [clause for clause in decl_clauses if is_decl_relevant(clause)]
+                    # decl_clauses = [clause for clause in decl_clauses if is_decl_relevant(clause)]
 
                     seed = "->".join(decl_clauses + [last_clause])
                     seed = seed if "[" in seed else "[" + seed
@@ -211,6 +238,8 @@ async def teacher_loop(cfg: DictConfig):
 
                 if proposal and proposal not in conjectures + proven_conjectures:
                     # Contract conjectures to make them Peano-parseable.
+                    proposal = simplify_decls(proposal)
+                    print(proposal)
                     contracted_proposal = d.contract(proposal)
                     #print("contracted: " + str(contracted_proposal))
                     if contracted_proposal not in conjectures + proven_conjectures:
