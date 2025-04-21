@@ -182,6 +182,12 @@ async def teacher_loop(cfg: DictConfig):
                     decl_clauses, last_clause = seed_conj.split("->")[:-1], seed_conj.split("->")[-1][:-1]
                     last_clause = f" ('a{max_var_count + 1} : {last_clause}) "
 
+                    def is_decl_relevant(clause):
+                        statement = clause.split(":")[-1]
+                        return ("a" in statement)
+                    
+                    decl_clauses = [clause for clause in decl_clauses if is_decl_relevant(clause)]
+
                     seed = "->".join(decl_clauses + [last_clause])
                     seed = seed if "[" in seed else "[" + seed
                 else:
