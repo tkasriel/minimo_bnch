@@ -110,7 +110,7 @@ async def teacher_loop(cfg: DictConfig):
                 agent.train(examples)
         else:
             start_iteration = i
-            agent = torch.load(f'{i}.pt', map_location=None if torch.cuda.is_available() else "cpu")
+            agent = torch.load(f'{i}.pt', map_location=None if torch.cuda.is_available() else "cpu", weights_only=False)
             print('Loaded agent from', f'{i}.pt')
         # Load examples and outcomes.
         if i > 0:
@@ -417,20 +417,14 @@ async def teacher_loop(cfg: DictConfig):
                 tm.write(f"Training took {train_end_time-end_search_time}s\n")
                 tm.write(f"Total time taken: {train_end_time-start_time}s\n")
 
+            save_json([thm.to_dict() for thm in useful_theorems], f"generated_theorems_{i}.json")
             save_json(examples, f'examples_{i}.json')
             save_json(outcomes, f'outcomes_{i}.json')
             print(len(examples), 'accumulated training examples.')
             log.write(json.dumps({'iteration': i,
                                     'msg': f'Training on {len(examples)} examples.'}))
+            
             torch.save(student_results, f'results_{i}.json')
-            agent.train(examples)
-            train_end_time = time.time()
-            with open("time_metric.txt", "a+") as tm:
-                tm.write(f"Iteration {i}: \n")
-                tm.write(f"Proof search took {end_conjecture_time-start_time}s\n")
-                tm.write(f"Proof search took {end_search_time-end_conjecture_time}s\n")
-                tm.write(f"Training took {train_end_time-end_search_time}s\n")
-                tm.write(f"Total time taken: {train_end_time-start_time}s\n")
 
 
 @hydra.main(version_base="1.2", config_path="config", config_name="bootstrap")
