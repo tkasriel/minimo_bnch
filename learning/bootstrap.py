@@ -170,12 +170,14 @@ async def teacher_loop(cfg: DictConfig):
             def renumber_var_names(statement):
                 matches = re.findall("'a\\d+", statement)
                 if matches:
-                    for i in matches:
+                    unique_matches = sorted(list(set(matches)), key = lambda i: int(i[2:]))
+
+                    for i in reversed(unique_matches):
                         statement = statement.replace(i, f"[var{i[2:]}]")
+                    unique_matches = sorted(list(set(matches)), key = lambda i: int(i[2:]))
 
-                    num_unique = sorted(list(set(matches)))
-
-                    for i, name in enumerate(num_unique):
+                    for i, name in enumerate(unique_matches):
+                        print(f"index: {i}, name: {name}")
                         statement = statement.replace(f"[var{name[2:]}]", f"'a{i}")
                     return statement
                 else:
@@ -245,7 +247,6 @@ async def teacher_loop(cfg: DictConfig):
                 if proposal and proposal not in conjectures + proven_conjectures:
                     # Contract conjectures to make them Peano-parseable.
                     proposal = simplify_decls(proposal)
-                    print(proposal)
                     contracted_proposal = d.contract(proposal)
                     #print("contracted: " + str(contracted_proposal))
                     if contracted_proposal not in conjectures + proven_conjectures:
