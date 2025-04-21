@@ -182,17 +182,20 @@ async def teacher_loop(cfg: DictConfig):
                     return statement
             
             def simplify_decls(statement):
-                decl_clauses, last_clause = statement.split("->")[:-1], statement.split("->")[-1]
+                decl_clauses, last_clause = statement.split("->")[:-1], statement.split("->")[-1].strip()
 
                 def is_decl_relevant(clause):
                     statement = clause.split(":")[-1]
                     return ("'a" in statement or statement[:4] == " nat")
                 
-                decl_clauses = [clause for clause in decl_clauses if is_decl_relevant(clause)]
-                recombined =  "->".join(decl_clauses + [last_clause])
+                decl_clauses = [clause.strip() for clause in decl_clauses if is_decl_relevant(clause)]
+                recombined =  " -> ".join(decl_clauses + [last_clause])
 
-                recombined = recombined if "[" in recombined else "[" + recombined
-                recombined = recombined if "]" in recombined else recombined + "]"
+                if "->" in recombined:
+                    recombined = recombined if "[" in recombined else "[" + recombined
+                    recombined = recombined if "]" in recombined else recombined + "]"
+                else:
+                    recombined = recombined.replace("[", "").replace("]", "")
 
                 return renumber_var_names(recombined)
 
