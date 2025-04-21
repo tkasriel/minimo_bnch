@@ -22,6 +22,22 @@ from util import batch_inference
 
 ALLOW_PROP_AS_TYPE = False
 
+class UsefulConjecture:
+    theorem: str
+    iter_generated: int
+    freq_used: int
+
+    def __init__(self, theorem: str, iter_generated: str | int, freq_used: str | int):
+        self.theorem = theorem
+        self.iter_generated = int(iter_generated)
+        self.freq_used = int(freq_used)
+    
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "theorem": self.theorem,
+            "iter_generated": str(self.iter_generated),
+            "freq_used": str(self.freq_used),
+        }
 
 @dataclass
 class Context:
@@ -373,14 +389,24 @@ MAX_OPEN_PARENS = 8
 
 def sample_conjecture(lm, context, seed = None, max_it=100):
     generation = ''
+    generation_no_seed = ''
 
     if(seed):
+        # generation = "[('a0 : nat) -> ('a1 : (= nat z z)) "
         generation = seed
+        
     
     for i in range(max_it):
         tokens = tokenize(generation)
         node, _, completions = Conjecture.parse(tokens, context.clone(), seed)
         if node:
+            # ex: 
+            # generation =          [('a0: (= z z)) -> (= o o)]
+            # generation_no_seed =  (= o o)]
+            # if not ":" in generation_no_seed and generation_no_seed[-1] == "]":
+            #     return generation_no_seed[:-1]
+            # if ":" in generation_no_seed and generation_no_seed[0] != "[":
+            #     return "[" + generation_no_seed
             return generation
         
         completions = list(set(space_completions(generation, completions)))
@@ -402,6 +428,8 @@ def sample_conjecture(lm, context, seed = None, max_it=100):
 
             # Add the maximum common prefix to the generation, which doesn't need the LM.
             generation += completions[0][:max_common_prefix_len]
+            generation_no_seed += completions[0][:max_common_prefix_len]
+
             completions = [c[max_common_prefix_len:] for c in completions]
 
             if '' in completions:
@@ -412,6 +440,7 @@ def sample_conjecture(lm, context, seed = None, max_it=100):
             choice = random.choices(choices, list(map(math.exp,
                                                       lm.score(choices, mean=False, prefix=generation))))[0]
             generation += choice
+            generation_no_seed += choice
             # Filter completions to those starting with the chosen character and drop the character.
             completions = [c[1:] for c in completions if c.startswith(choice)]
             # print(generation)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import time
 import gc
 import io
 from dataclasses import dataclass
@@ -47,14 +48,19 @@ app.conf.accept_content = ['application/json', 'application/x-python-serialize']
 def try_prove(agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, statement: str, verbose: bool = False) -> StudentResult:
     # print(f"worker, curr allocated (init): {torch.cuda.memory_allocated()}")
 
-    # print('Proving', statement, 'on', agent._policy._lm._lm.device)
-
+    # print('Proving', statement[0], 'on', agent._policy._lm._lm.device)
+    curr_time = time.time()
     state = peano.PyProofState(theory.theory,
                                theory.premises,
                                statement)
 
+    #print(f"Instantiating peano state took {time.time()-curr_time:02.1f}s")
+    curr_time = time.time()
+
     try:
         agent_result = agent.proof_search(statement, state, verbose)
+        print(f"Proof search took {time.time()-curr_time:02.1f}s")
+        curr_time = time.time()
 
         if agent_result.success:
             proof = agent_result.root.state_node.reconstruct_proof(
@@ -63,7 +69,9 @@ def try_prove(agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, sta
             logprob = agent_result.root.solution_logprob_under_policy(agent._policy, solution_actions)
         else:
             solution_actions, proof, logprob = None, None, None
+        #print(f"Getting results took {time.time()-curr_time:02.1f}s")
 
+        curr_time = time.time()
         examples = []
         # Policy examples for the proved goal.
         examples.extend(agent._policy.extract_examples(root=agent_result.root))
@@ -75,6 +83,9 @@ def try_prove(agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, sta
                 agent._policy)
         # print(f"worker, curr allocated (pre-del): {torch.cuda.memory_allocated()}")
         # print(f"worker, curr allocated (post-del): {torch.cuda.memory_allocated()}")
+        #print(f"Got {len(hindsight_examples)} examples")
+        #print(f"Extracting examples took {time.time()-curr_time:02.1f}s")
+        curr_time = time.time()
 
 
         return StudentResult(

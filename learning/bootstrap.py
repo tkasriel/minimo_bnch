@@ -23,7 +23,7 @@ import worker
 from worker import StudentResult  # noqa
 from hindsight import HindsightExample  # noqa
 from util import format_blocks_with_indent, sample_batch, setup_wandb, value_color, save_json
-from conjecture import AgentLM, Context, sample_conjecture
+from conjecture import AgentLM, Context, UsefulConjecture, sample_conjecture
 from proofsearch import ProofSearchAgent, make_agent
 import re
 
@@ -64,28 +64,31 @@ def process_main(id: int, agent: ProofSearchAgent, background_theory: worker.Bac
 async def teacher_loop(cfg: DictConfig):
     if cfg.use_multiprocessing:
         mp.set_start_method(cfg.mp_start_method)
+
     agent = make_agent(cfg)
+    # os.chdir("~/minimo")
     theory_folder = "theories"
     if "output" in os.path.abspath(__file__):
         # print(os.path.abspath(__file__))
         theory_folder = "../../../theories"
     with open(os.path.join(os.path.dirname(__file__), theory_folder, cfg.theory.name + '.p')) as f:
         theory = f.read()
+    
 
     difficulty_buckets = sorted([list(cfg.difficulty_buckets[i].items())[0]
                                  for i in range(len(cfg.difficulty_buckets))],
                                 key=lambda kv: kv[1])
-
     premises = cfg.theory.premises
 
-    d = peano.PyDerivation()
-    d.incorporate(theory)
+    permanent_deriv = peano.PyDerivation()
+    permanent_deriv.incorporate(theory)
     proven_conjectures = []
     comp_to_raw_dict = {}
     seed_used = {}
     seen_hindsight_goals = set()
     proofs = []
     outcomes = []
+    useful_theorems: list[UsefulConjecture] = []
 
     continue_dir = cfg.get('continue')
     start_iteration = 0
@@ -99,9 +102,16 @@ async def teacher_loop(cfg: DictConfig):
         while os.path.exists(f'{i}.pt'):
             i += 1
         i -= 1
-        start_iteration = i
-        agent = torch.load(f'{i}.pt', weights_only = False)
-        print('Loaded agent from', f'{i}.pt')
+        if os.path.exists(f"{i}.5.pt"):
+            agent = torch.load(f'{i}.5.pt')
+            start_iteration = i + 1
+            with open(f"examples_{i}.json") as f:
+                examples = json.load(f)
+                agent.train(examples)
+        else:
+            start_iteration = i
+            agent = torch.load(f'{i}.pt', map_location=None if torch.cuda.is_available() else "cpu")
+            print('Loaded agent from', f'{i}.pt')
         # Load examples and outcomes.
         if i > 0:
             with open(f'outcomes_{i-1}.json', 'r') as f:
@@ -111,6 +121,10 @@ async def teacher_loop(cfg: DictConfig):
                                          o['proof'] is not None]
                 seen_hindsight_goals = {o['problem'] for o in outcomes
                                         if o['hindsight'] and o['proof'] is not None}
+                # comp_to_raw_dict = {o['problem']: o['problem_raw'] for o in outcomes if "problem_raw" in o.keys()}
+            with open(f"generated_theorems_{i-1}.json") as f:
+                thms = json.load(f)
+                useful_theorems = [UsefulConjecture(**thm) for thm in thms]
 
         print('Loaded', len(proven_conjectures), 'proven conjectures from previous run.')
 
@@ -119,13 +133,18 @@ async def teacher_loop(cfg: DictConfig):
         print('Ablation: Freezing conjecturer.')
 
 
+    conjecture_index = len(useful_theorems)
     with open('log.jsonl', 'w') as log:
         for i in range(start_iteration, cfg.iterations):
             start_time = time.time()
             torch.save(agent, f'{i}.pt')
             print(f"current it: {i}")
+            background_theory = worker.BackgroundTheory(theory + "\n\n" + "\n\n".join([thm.theorem for thm in useful_theorems]), premises + [thm.theorem.split(" : ")[0] for thm in useful_theorems])
+
+            d = permanent_deriv.clone()
+            if i > 0:
+                d.incorporate("\n\n".join(map(lambda x: x.theorem, useful_theorems)))
             context = Context(d, None, [])
-            background_theory = worker.BackgroundTheory(theory, premises)
             num_processes = cfg.num_processes
 
             # Start multiprocessing
@@ -146,31 +165,28 @@ async def teacher_loop(cfg: DictConfig):
             # 1- Run conjecturing model to obtain N conjectures.
             print(now(), f'Iteration #{i}: making conjectures...')
             progress_bar = tqdm(total=cfg.n_conjectures)
-            conjectures: list[str] = []
+            conjectures: list[tuple[str, str]] = []
 
             def get_seed_statement():
                 if(np.random.random() > 0.5 and len(proven_conjectures) > 0):
+                    # seed_conj = "[('a0: nat) -> ('a1: (= 'a0 z)) -> (= (s 'a0) o)]"
                     seed_conj = np.random.choice(proven_conjectures)
-                    seed_conj = comp_to_raw_dict[str(seed_conj)]
-                    print("seed:" + seed_conj)
-                    max_var_count = max([int(i[2:]) for i in re.findall("'a\\d+", seed_conj)] + [-1])
-                    if (max_var_count == -1):
-                        return ""
+                    # seed_conj = comp_to_raw_dict[str(seed_conj)]
+                    matches = re.findall("'a\\d+", seed_conj)
+                    if matches:
+                        max_var_count = max(int(i[2:]) for i in matches)
+                    else:
+                        max_var_count = -1
+                    #max_var_count = max([int(i[2:]) for i in re.findall("'a\\d+", seed_conj)])
+
                     decl_clauses, last_clause = seed_conj.split("->")[:-1], seed_conj.split("->")[-1][:-1]
-
-                    #remove trivial clauses (i.e. ones that don't contain variables)
-                    def is_decl_nontrivial(clause):
-                        statement = clause.split(":")[-1]
-                        return ("a" in statement)
-                    
-                    decl_clauses = [clause for clause in decl_clauses if is_decl_nontrivial(clause)]
-
-                    last_clause = f" ('a{max_var_count + 1} :{last_clause}) -> "
+                    last_clause = f" ('a{max_var_count + 1} : {last_clause}) "
 
                     seed = "->".join(decl_clauses + [last_clause])
+                    seed = seed if "[" in seed else "[" + seed
                 else:
-                    seed = ""
-                print("seed output:" + seed)
+                    seed = None
+                #print(seed)
                 return seed
 
             if cfg.use_multiprocessing:
@@ -266,6 +282,11 @@ async def teacher_loop(cfg: DictConfig):
             for student_result in student_results:
                 if student_result.success:
                     success_logprobs.append(student_result.logprob)
+                    for conj in useful_theorems:
+                        conj_name = conj.theorem.split(" : ")[0]
+                        if any([conj_name in r for r in student_result.proof]): #type: ignore
+                            conj.freq_used += 1
+
 
                 outcomes.append({'iteration': i,
                                 'problem': student_result.problem,
@@ -299,6 +320,24 @@ async def teacher_loop(cfg: DictConfig):
                     list(zip([k for k, _ in difficulty_buckets], thresholds)),
                     'min =', np.min(success_logprobs),
                     'max =', np.max(success_logprobs))
+                print('Thresholds:',
+                    list(zip([k for k, _ in difficulty_buckets], thresholds)),
+                    'min =', np.min(success_logprobs),
+                    'max =', np.max(success_logprobs))
+
+            # Cut the least used theorems
+            useful_theorems = [thm for thm in useful_theorems if not (i - thm.iter_generated >= 3 and thm.freq_used == 0)]
+            useful_theorems.sort(key=lambda thm: thm.freq_used/(i-thm.iter_generated))
+            useful_theorems = useful_theorems[len(useful_theorems)//10:]
+            for thm in useful_theorems:
+                if thm.freq_used == 0:
+                    continue
+                thm_arr = list(map(str, thm.theorem.split(" : ")[1:]))
+
+                thm_str = (" : ".join(thm_arr))[:-1]
+                to_add = f'Conj:(useful) ' + d.elaborate(thm_str)
+                if not to_add in examples:
+                    examples.append(to_add)
 
             # 3b- Classify problems into easy/hard.
             for student_result in student_results:
@@ -308,28 +347,39 @@ async def teacher_loop(cfg: DictConfig):
                                 for i, (k, _) in enumerate(difficulty_buckets)
                                 if (student_result.logprob <= thresholds[i] or
                                     i + 1 == len(difficulty_buckets)))
+                    if ": nat" in student_result.problem:
+                        useful_theorems.append(UsefulConjecture(f"c{conjecture_index:04} : " + student_result.problem + ".", i, 0))
+                    conjecture_index += 1
                 else:
                     outcome = FAIL
+                
 
                 if not cfg.get('freeze_conjecturer', False):
-                    # print(student_result.problem)
                     tags = [outcome]
-                    if ": nat" in student_result.problem: tags.append("useful")
-                    if student_result.problem.count("z") < 3: tags.append("few_zeros")
-                    try:
-                        examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
-                    except BaseException: # wtf is this
-                        pass
-
+                    # if ": nat" in student_result.problem: tags.append("useful")
+                    # if student_result.problem.count("z") < 3: tags.append("few_zeros")
+                    
+                    examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
                 if student_result.success:
                     proven_conjectures.append(student_result.problem)
+                    #proven_conjectures.append(student_result.problem_no_seed)
                     proofs.append(student_result.proof)
 
                 examples.extend(student_result.extracted_examples)
 
+                long_ex = []
+                if os.path.exists("long_examples.json"):
+                    with open("long_examples.json", "r") as f:
+                        long_ex = json.load(f)
                 if cfg.train_policy_on_hindsight_examples:
                     for h in student_result.hindsight_examples:
                         if h.goal not in seen_hindsight_goals:
+                            if len(h.proof) > 4:
+                                long_ex.append({
+                                    "goal": str(h.goal),
+                                    "proof": h.proof,
+                                    "length": str(len(h.proof))
+                                })
                             outcome = next(k
                                         for i, (k, _) in enumerate(difficulty_buckets)
                                         if h.logprob <= thresholds[i] or i + 1 == len(difficulty_buckets))
@@ -361,10 +411,19 @@ async def teacher_loop(cfg: DictConfig):
                 tm.write(f"Total time taken: {train_end_time-start_time}s\n")
 
             save_json(examples, f'examples_{i}.json')
-            try:
-                torch.save(student_results, f'results_{i}.json')
-            except Exception as e:
-                print(e) # will fix later.
+            save_json(outcomes, f'outcomes_{i}.json')
+            print(len(examples), 'accumulated training examples.')
+            log.write(json.dumps({'iteration': i,
+                                    'msg': f'Training on {len(examples)} examples.'}))
+            torch.save(student_results, f'results_{i}.json')
+            agent.train(examples)
+            train_end_time = time.time()
+            with open("time_metric.txt", "a+") as tm:
+                tm.write(f"Iteration {i}: \n")
+                tm.write(f"Proof search took {end_conjecture_time-start_time}s\n")
+                tm.write(f"Proof search took {end_search_time-end_conjecture_time}s\n")
+                tm.write(f"Training took {train_end_time-end_search_time}s\n")
+                tm.write(f"Total time taken: {train_end_time-start_time}s\n")
 
 
 @hydra.main(version_base="1.2", config_path="config", config_name="bootstrap")
