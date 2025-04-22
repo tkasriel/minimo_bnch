@@ -177,28 +177,35 @@ async def teacher_loop(cfg: DictConfig):
                     unique_matches = sorted(list(set(matches)), key = lambda i: int(i[2:]))
 
                     for i, name in enumerate(unique_matches):
-                        print(f"index: {i}, name: {name}")
                         statement = statement.replace(f"[var{name[2:]}]", f"'a{i}")
                     return statement
                 else:
                     return statement
             
             def simplify_decls(statement):
-                decl_clauses, last_clause = statement.split("->")[:-1], statement.split("->")[-1].strip()
+                decl_clauses, last_clause = statement.split("->")[:-1], statement.split("->")[-1]
 
-                def is_decl_relevant(clause):
-                    statement = clause.split(":")[-1]
-                    return ("'a" in statement or statement[:4] == " nat")
-                
-                decl_clauses = [clause.strip() for clause in decl_clauses if is_decl_relevant(clause)]
-                recombined =  " -> ".join(decl_clauses + [last_clause])
+                used_variables = set(re.findall("'a\\d+", last_clause))
+                are_clauses_useful = [False for _ in decl_clauses]
+
+                for _ in range(len(decl_clauses)):
+                    for i, clause in enumerate(decl_clauses):
+                        clause_vars = re.findall("'a\\d+", clause)
+                        if clause_vars:
+                            for var in clause_vars:
+                                if(var in used_variables):
+                                    are_clauses_useful[i] = True
+                                    used_variables.update(clause_vars)
+
+                decl_clauses = [decl_clauses[i].strip() for i in range(len(decl_clauses)) if are_clauses_useful[i]]
+                recombined =  " -> ".join(decl_clauses + [last_clause.strip()])
 
                 if "->" in recombined:
                     recombined = recombined if "[" in recombined else "[" + recombined
                     recombined = recombined if "]" in recombined else recombined + "]"
                 else:
-                    recombined = recombined.replace("[", "").replace("]", "")
-
+                    recombined = recombined.replace("[", "").replace("]", "").strip()
+                
                 return renumber_var_names(recombined)
 
 
