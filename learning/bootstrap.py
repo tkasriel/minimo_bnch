@@ -214,21 +214,16 @@ async def teacher_loop(cfg: DictConfig):
                     # seed_conj = "[('a0: nat) -> ('a1: (= 'a0 z)) -> (= (s 'a0) o)]"
                     seed_conj = np.random.choice(proven_conjectures)
                     seed_conj = comp_to_raw_dict[str(seed_conj)]
+                    seed_conj = simplify_decls(seed_conj)
+
                     matches = re.findall("'a\\d+", seed_conj)
                     if matches:
                         max_var_count = max(int(i[2:]) for i in matches)
                     else:
                         max_var_count = -1
-                    #max_var_count = max([int(i[2:]) for i in re.findall("'a\\d+", seed_conj)])
 
                     decl_clauses, last_clause = seed_conj.split("->")[:-1], seed_conj.split("->")[-1][:-1]
                     last_clause = f" ('a{max_var_count + 1} :{last_clause}) "
-
-                    # def is_decl_relevant(clause):
-                    #     statement = clause.split(":")[-1]
-                    #     return ("'a" in statement or statement[:4] == " nat")
-                    
-                    # decl_clauses = [clause for clause in decl_clauses if is_decl_relevant(clause)]
 
                     seed = "->".join(decl_clauses + [last_clause])
                     seed = seed if "[" in seed else "[" + seed
@@ -253,7 +248,6 @@ async def teacher_loop(cfg: DictConfig):
 
                 if proposal and proposal not in conjectures + proven_conjectures:
                     # Contract conjectures to make them Peano-parseable.
-                    proposal = simplify_decls(proposal)
                     contracted_proposal = d.contract(proposal)
                     #print("contracted: " + str(contracted_proposal))
                     if contracted_proposal not in conjectures + proven_conjectures:
