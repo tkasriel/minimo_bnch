@@ -389,7 +389,38 @@ MAX_OPEN_PARENS = 8
 
 def sample_conjecture(lm, context: Context, seed = None, max_it=100) -> str | None:
     generation = ''
-    generation_no_seed = ''
+
+    def has_trivial_outcome(conjecture):
+        parts = conjecture.split("->")
+        if len(parts) <= 1:
+            return True  # Not enough arrows, probably incomplete
+
+        # check if it only involves constant values and operators
+        last_statement = parts[-1].strip()
+        if ']' in last_statement:
+            last_statement = last_statement[:last_statement.index(']')].strip()
+        
+        tokens = set([ch for ch in last_statement])
+        constant_tokens = set(['z', ' ', '+', '*', 'o', '(', ')', '=', 's', ']', '.'])
+        non_trivial_tokens = tokens - constant_tokens
+        if not non_trivial_tokens:
+            return True  # only involves trivial tokens
+        
+        # matches trivial arithmetic identities
+        trvial_identities = [
+            r"\(= +\(\* +'[a-zA-Z0-9_]+ +z\) +z\)",   # (* n z) = z
+            r"\(= +z +\(\* +'[a-zA-Z0-9_]+ +z\)\)",   # z = (* n z)
+            r"\(= +\(\+ +'[a-zA-Z0-9_]+ +z\) +'[a-zA-Z0-9_]+\)",  # (+ n z) = n
+            r"\(= +'[a-zA-Z0-9_]+ +\(\+ +'[a-zA-Z0-9_]+ +z\)\)",  # n = (+ n z)
+            r"\(= +\(\* +o +'[a-zA-Z0-9_]+\) +'[a-zA-Z0-9_]+\)",  # (* o n) = n
+            r"\(= +'[a-zA-Z0-9_]+ +\(\* +o +'[a-zA-Z0-9_]+\)\)",  # n = (* o n)
+            r"\(= +'[a-zA-Z0-9_]+ +'[a-zA-Z0-9_]+\)",  # (= 'a0 'a0)
+        ]
+        for pattern in trvial_identities:
+            if re.fullmatch(pattern, last_statement):
+                return True
+
+        return False
 
     if(seed):
         # generation = "[('a0 : nat) -> ('a1 : (= nat z z)) "
@@ -407,6 +438,12 @@ def sample_conjecture(lm, context: Context, seed = None, max_it=100) -> str | No
             #     return generation_no_seed[:-1]
             # if ":" in generation_no_seed and generation_no_seed[0] != "[":
             #     return "[" + generation_no_seed
+            if has_trivial_outcome(generation):
+                #print('TRIVIAL OUTCOME:', generation)
+                # Reject this conjecture and start over
+                generation = seed if seed else ''
+                continue
+            #else:
             return generation
         
         completions = list(set(space_completions(generation, completions)))
@@ -428,7 +465,6 @@ def sample_conjecture(lm, context: Context, seed = None, max_it=100) -> str | No
 
             # Add the maximum common prefix to the generation, which doesn't need the LM.
             generation += completions[0][:max_common_prefix_len]
-            generation_no_seed += completions[0][:max_common_prefix_len]
 
             completions = [c[max_common_prefix_len:] for c in completions]
 
@@ -440,7 +476,6 @@ def sample_conjecture(lm, context: Context, seed = None, max_it=100) -> str | No
             choice = random.choices(choices, list(map(math.exp,
                                                       lm.score(choices, mean=False, prefix=generation))))[0]
             generation += choice
-            generation_no_seed += choice
             # Filter completions to those starting with the chosen character and drop the character.
             completions = [c[1:] for c in completions if c.startswith(choice)]
             # print(generation)
