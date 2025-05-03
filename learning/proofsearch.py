@@ -257,8 +257,8 @@ class HolophrasmNode(ProofStateNode):
         lines.append(f'G={len(self._proof_states)}')
 
         state = self._proof_states[0]
-        theory = [x + str(state.lookup(x))[1:] for x in state.premises() if state.lookup(x)]
-        lines.append("Theorems: " + "\n".join(theory) + "\n")
+        # theory = [x + str(state.lookup(x))[1:] for x in state.premises() if state.lookup(x)]
+        # lines.append("Theorems: " + "\n".join(theory) + "\n")
 
         for i, ps in enumerate(self._proof_states):
             if i > 0:
@@ -510,7 +510,9 @@ class TreeSearchNode:
             return logprob
         else:
             policy.initialize(self)
+            curr_time = time.time()
             pi, _value = policy.evaluate(self)
+            # print(f"evaluation took {time.time()-curr_time}s")
             assert actions
 
             head, tail = actions[0], actions[1:]
@@ -688,11 +690,15 @@ class LMPolicy(Policy):
         children_states = [str(c.state_node) for c in node._children]
         actions = [str(a) for a in node.actions]
         policy_queries = [] if node.is_conjunctive() else actions
-        
-        policy_estimates, value_estimates = self._lm.estimate_state_and_action_values(
-                str(node.state_node),
-                actions,
-                children_states)
+        if "intro." in actions:
+            policy_estimates = [0 for i in actions]
+            policy_estimates[actions.index("intro.")] = 1
+            value_estimates = policy_estimates[:]
+        else:
+            policy_estimates, value_estimates = self._lm.estimate_state_and_action_values(
+                    str(node.state_node),
+                    actions,
+                    children_states)
 
         if node.is_conjunctive():
             policy_estimates = [1 for _ in actions]
