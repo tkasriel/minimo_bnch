@@ -125,17 +125,16 @@ def useful_thm_rate(fp: str, ax: Axes, color: str) -> None:
 def graph_capabilities(fp: str, ax: Axes, color: str) -> None:
     """The Big Boi"""
     max_iter = get_max_it(fp)
-    max_iter = 1
     solve_counts = np.zeros(max_iter)
-    conf = OmegaConf.create({"problemset": "nng", "end": 3})
+    conf = OmegaConf.create({"problemset": "nng"})
     exp_name = os.path.basename(fp).replace("_", " ")
     print(f"Current experiment: {exp_name}")
     for it in range(max_iter):
         print(f"Current iteration: {it+1}/{max_iter}")
         if torch.cuda.is_available():
-            agent = torch.load(os.path.join(fp, f"{max_iter-1}.pt"), weights_only=False)
+            agent = torch.load(os.path.join(fp, f"{it}.pt"), weights_only=False)
         else:
-            agent = torch.load(os.path.join(fp, f"{max_iter-1}.pt"), weights_only=False, map_location=torch.device('cpu'))
+            agent = torch.load(os.path.join(fp, f"{it}.pt"), weights_only=False, map_location=torch.device('cpu'))
         problems = evaluate_agent(conf, agent)
         solve_counts[it] = len(problems._solved)
     
