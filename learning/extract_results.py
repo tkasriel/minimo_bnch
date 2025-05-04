@@ -142,7 +142,7 @@ def graph_capabilities(fp: str, ax: Axes, color: str) -> None:
     ax.plot(solve_counts, color=color, linewidth=1, label=exp_name)
 
 
-def run_experiment_on_all (fp_all: str, exp_function: Callable, y_lims: tuple[int, int], y_name: str, exp_name: str) -> None:
+def run_experiment_on_all (fp_all: str, exp_function: Callable, y_lims: tuple[int, int], y_name: str, exp_name: str = "") -> None:
     fig, ax = setup_plot(10, y_lims, y_name, exp_name)
     str(exp_function)
     exps = os.listdir(fp_all)
@@ -156,11 +156,11 @@ def run_experiment_on_all (fp_all: str, exp_function: Callable, y_lims: tuple[in
 if __name__ == "__main__":
     os.makedirs(visual_path, exist_ok=True)
     outs = "learning/outputs/presentation_outputs"
-    run_experiment_on_all(outs, graph_success_rate, (0,1), "", "Proof success rate (training)")
-    run_experiment_on_all(outs, graph_log_prob, (-5,0), "Log Probability", "Log Probability of Successful Proofs")
-    run_experiment_on_all(outs, graph_thm_use, (0,70), "Use count", "Use count of Known Theorems")
-    run_experiment_on_all(outs, useful_thm_rate, (0, 10), "Generated Theorems", "")
+    run_experiment_on_all(outs, graph_success_rate, (0,1), "")
+    run_experiment_on_all(outs, graph_log_prob, (-5,0), "Log Probability")
+    run_experiment_on_all(outs, graph_thm_use, (0,70), "Use count")
+    run_experiment_on_all(outs, useful_thm_rate, (0, 10), "Generated Theorems")
     pset = load_natural_number_game_problemset()
-    run_experiment_on_all(outs, graph_capabilities, (0,len(pset)+1), "Problems solved", "")
+    run_experiment_on_all(outs, graph_capabilities, (0,len(pset)+1), "Problems solved")
 
     
