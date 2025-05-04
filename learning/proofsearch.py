@@ -1342,7 +1342,7 @@ def make_agent(config):
     return agent
 
 
-def evaluate_agent(config: DictConfig, agent=None):
+def evaluate_agent(config: DictConfig, agent=None, add_to_library:bool = False) -> problems.ProblemSet:
     if agent is None:
         agent = make_agent(config)
 
@@ -1364,10 +1364,11 @@ def evaluate_agent(config: DictConfig, agent=None):
         print('Success?', result.success)
 
         if result.success:
-            problemset.mark_as_solved(problem, add_to_library=False)
+            problemset.mark_as_solved(problem, add_to_library=add_to_library)
 
     print(f'Solved {len(problemset._solved)}/{len(problemset)}')
     print(f'Solved problems: {", ".join(problemset._solved)}')
+    return problemset
 
 
 def test_preconditions():
