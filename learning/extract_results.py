@@ -122,7 +122,7 @@ def useful_thm_rate(fp: str, ax: Axes, color: str) -> None:
     ax.plot(thm_count, color=color, linewidth=1, label=exp_name)
 
 
-def graph_capabilities(fp: str, ax: Axes, color: str) -> None:
+def graph_capabilities(fp: str, ax: Axes, color: str, lib: bool = False) -> None:
     """The Big Boi"""
     max_iter = get_max_it(fp)
     solve_counts = np.zeros(max_iter)
@@ -135,10 +135,13 @@ def graph_capabilities(fp: str, ax: Axes, color: str) -> None:
             agent = torch.load(os.path.join(fp, f"{it}.pt"), weights_only=False)
         else:
             agent = torch.load(os.path.join(fp, f"{it}.pt"), weights_only=False, map_location=torch.device('cpu'))
-        problems = evaluate_agent(conf, agent)
+        problems = evaluate_agent(conf, agent, lib)
         solve_counts[it] = len(problems._solved)
     
     ax.plot(solve_counts, color=color, linewidth=1, label=exp_name)
+
+def graph_capabilities_add_library(fp: str, ax: Axes, color: str) -> None:
+    graph_capabilities(fp, ax, color, True)
 
 
 def run_experiment_on_all (fp_all: str, exp_function: Callable, y_lims: tuple[int, int], y_name: str, exp_name: str = "") -> None:
@@ -160,6 +163,7 @@ if __name__ == "__main__":
     run_experiment_on_all(outs, graph_thm_use, (0,70), "Use count")
     run_experiment_on_all(outs, useful_thm_rate, (0, 10), "Generated Theorems")
     pset = load_natural_number_game_problemset()
-    run_experiment_on_all(outs, graph_capabilities, (0,len(pset)+1), "Problems solved")
+    # run_experiment_on_all(outs, graph_capabilities, (0,len(pset)+1), "Problems solved")
+    run_experiment_on_all(outs, graph_capabilities_add_library, (0,len(pset)+1), "Problems solved")
 
     
