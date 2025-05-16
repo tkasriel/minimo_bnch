@@ -92,5 +92,6 @@ def instant_proof_method(conjs, theory, premises, ths_to_prove):
             if initial_state:
                 print(f"{theorem} proven!")
         return
-full_proof_method(conjs,theory, premises, ths_to_prove)
+if __name__ == "__main__":
+    full_proof_method(conjs,theory, premises, ths_to_prove)
         

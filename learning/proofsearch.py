@@ -34,6 +34,7 @@ class GeneratedProofScript:
 
 
 class ProofStateNode:
+    _proof_states: list[peano.PyProofState]
     def actions(self) -> list[str]:
         raise NotImplementedError
 
@@ -252,7 +253,12 @@ class HolophrasmNode(ProofStateNode):
             return '<solved>'
 
         lines = []
+        
         lines.append(f'G={len(self._proof_states)}')
+
+        state = self._proof_states[0]
+        # theory = [x + str(state.lookup(x))[1:] for x in state.premises() if state.lookup(x)]
+        # lines.append("Theorems: " + "\n".join(theory) + "\n")
 
         for i, ps in enumerate(self._proof_states):
             if i > 0:
@@ -504,7 +510,9 @@ class TreeSearchNode:
             return logprob
         else:
             policy.initialize(self)
+            curr_time = time.time()
             pi, _value = policy.evaluate(self)
+            # print(f"evaluation took {time.time()-curr_time}s")
             assert actions
 
             head, tail = actions[0], actions[1:]
@@ -682,11 +690,15 @@ class LMPolicy(Policy):
         children_states = [str(c.state_node) for c in node._children]
         actions = [str(a) for a in node.actions]
         policy_queries = [] if node.is_conjunctive() else actions
-
-        policy_estimates, value_estimates = self._lm.estimate_state_and_action_values(
-                str(node.state_node),
-                actions,
-                children_states)
+        if "intro." in actions:
+            policy_estimates = [0 for i in actions]
+            policy_estimates[actions.index("intro.")] = 1
+            value_estimates = policy_estimates[:]
+        else:
+            policy_estimates, value_estimates = self._lm.estimate_state_and_action_values(
+                    str(node.state_node),
+                    actions,
+                    children_states)
 
         if node.is_conjunctive():
             policy_estimates = [1 for _ in actions]
@@ -759,7 +771,7 @@ class LMPolicy(Policy):
 
         return policy_examples + value_examples  # + construction_examples
 
-    def extract_examples_from_path(self, path: list[ProofStateNode]) -> list[str]:
+    def extract_examples_from_path(self, path: list[ProofStateNode]) -> list:
         examples = []
 
         for i, (state, action) in enumerate(path):
@@ -825,7 +837,7 @@ class MonteCarloTreeSearch(Policy):
 
     def evaluate(self, root: TreeSearchNode, start_index=0,
                  on_expand=None, verbose=True) -> np.array:
-        for i in tqdm_if(verbose)(range(self._budget)):
+        for i in range(self._budget):
             if root.is_solved():
                 break
 
@@ -985,7 +997,7 @@ class ProofSearchAgent:
         self._checkpoints = 0
         self._examples = []
 
-    def proof_search(self, problem, state, verbose: bool =False):
+    def proof_search(self, problem: str, state: peano.PyProofState, verbose: bool =False):
         root = TreeSearchNode(self._node_type([state]))
 
         node = root
@@ -1121,12 +1133,10 @@ def visualize_search_tree(root, path, min_visits=0):
 
 def run_proof_search_agent(config):
     # print()
-    agent_path = "/Users/tkasriel/code/rsh/minimo/learning/outputs/2025-01-29/22-35-10/4.pt"
-    if agent_path:
-        print('Loading from checkpoint', agent_path)
-        agent = torch.load(agent_path)
-        begin = 0#config.skip
-        print('Begin =', begin)
+    if config.get('agent_path'):
+        print('Loading from checkpoint', config.agent_path)
+        agent = torch.load(config.agent_path)
+        begin = config.skip
     else:
         agent = ProofSearchAgent(config.agent)
         begin = 0
@@ -1332,7 +1342,7 @@ def make_agent(config):
     return agent
 
 
-def evaluate_agent(config: DictConfig, agent=None):
+def evaluate_agent(config: DictConfig, agent=None, add_to_library:bool = False) -> problems.ProblemSet:
     if agent is None:
         agent = make_agent(config)
 
@@ -1354,10 +1364,11 @@ def evaluate_agent(config: DictConfig, agent=None):
         print('Success?', result.success)
 
         if result.success:
-            problemset.mark_as_solved(problem, add_to_library=False)
+            problemset.mark_as_solved(problem, add_to_library=add_to_library)
 
     print(f'Solved {len(problemset._solved)}/{len(problemset)}')
     print(f'Solved problems: {", ".join(problemset._solved)}')
+    return problemset
 
 
 def test_preconditions():

@@ -20,6 +20,25 @@ from util import batch_inference, ALLOW_PROP_AS_TYPE
 # Arrow := "[" decl* Prop "]"
 
 
+ALLOW_PROP_AS_TYPE = False
+
+class UsefulConjecture:
+    theorem: str
+    iter_generated: int
+    freq_used: int
+
+    def __init__(self, theorem: str, iter_generated: str | int, freq_used: str | int):
+        self.theorem = theorem
+        self.iter_generated = int(iter_generated)
+        self.freq_used = int(freq_used)
+    
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "theorem": self.theorem,
+            "iter_generated": str(self.iter_generated),
+            "freq_used": str(self.freq_used),
+        }
+
 @dataclass
 class Context:
     derivation: peano.PyDerivation
@@ -52,8 +71,8 @@ class Conjecture(Node):
     prop: 'Prop'
 
     @staticmethod
-    def parse(tokens: list[str], context):
-        return Prop.parse(tokens, context)
+    def parse(tokens: list[str], context, seed = None):
+        return Prop.parse(tokens, context, seed = seed)
 
     def __str__(self):
         return str(self.prop)
@@ -64,7 +83,7 @@ class Prop(Node):
     prop: Union['App', 'Arrow', 'Atom']
 
     @staticmethod
-    def parse(tokens: list[str], context):
+    def parse(tokens: list[str], context, seed = None):
         context = context.with_target_type('prop')
         node, consumed, completions = App.parse(tokens, context)
 
@@ -76,7 +95,7 @@ class Prop(Node):
         if consumed:
             return node, consumed, completions_atom
 
-        node_a, consumed_a, completions_a = Arrow.parse(tokens, context)
+        node_a, consumed_a, completions_a = Arrow.parse(tokens, context, seed)
         return node_a, consumed_a, completions + completions_atom + completions_a
 
     def __str__(self):
@@ -286,13 +305,13 @@ class Decl(Node):
 @dataclass
 class Arrow(Node):
     input_types: list['Decl']
-    output_type: 'Value'
+    output_type: list['Value']
 
     def __str__(self):
-        return '[' + ' -> '.join(map(str, self.input_types + [self.output_type])) + ']'
+        return '[' + ' -> '.join(map(str, self.input_types + self.output_type)) + ']'
 
     @staticmethod
-    def parse(tokens: list[str], context):
+    def parse(tokens: list[str], context, seed = None):
         consumed = 0
 
         if not tokens:
@@ -304,7 +323,7 @@ class Arrow(Node):
             return None, 0, []
 
         input_types = []
-        output_type = None
+        output_type = []
 
         while True:
             decl_node, decl_consumed, decl_completions = Decl.parse(tokens, context)
@@ -368,18 +387,66 @@ def pretty_print_conjecture(conjecture: str) -> str:
 
 MAX_OPEN_PARENS = 8
 
-def sample_conjecture(lm, context, max_it=100):
+def sample_conjecture(lm, context, seed = None, max_it=100):
     generation = ''
 
-    for _ in range(max_it):
+    def has_trivial_outcome(conjecture):
+        parts = conjecture.split("->")
+        if len(parts) <= 1:
+            return True  # Not enough arrows, probably incomplete
+
+        # check if it only involves constant values and operators
+        last_statement = parts[-1].strip()
+        if ']' in last_statement:
+            last_statement = last_statement[:last_statement.index(']')].strip()
+        
+        tokens = set([ch for ch in last_statement])
+        constant_tokens = set(['z', ' ', '+', '*', 'o', '(', ')', '=', 's', ']', '.'])
+        non_trivial_tokens = tokens - constant_tokens
+        if not non_trivial_tokens:
+            return True  # only involves trivial tokens
+        
+        # matches trivial arithmetic identities
+        trvial_identities = [
+            r"\(= +\(\* +'[a-zA-Z0-9_]+ +z\) +z\)",   # (* n z) = z
+            r"\(= +z +\(\* +'[a-zA-Z0-9_]+ +z\)\)",   # z = (* n z)
+            r"\(= +\(\+ +'[a-zA-Z0-9_]+ +z\) +'[a-zA-Z0-9_]+\)",  # (+ n z) = n
+            r"\(= +'[a-zA-Z0-9_]+ +\(\+ +'[a-zA-Z0-9_]+ +z\)\)",  # n = (+ n z)
+            r"\(= +\(\* +o +'[a-zA-Z0-9_]+\) +'[a-zA-Z0-9_]+\)",  # (* o n) = n
+            r"\(= +'[a-zA-Z0-9_]+ +\(\* +o +'[a-zA-Z0-9_]+\)\)",  # n = (* o n)
+            r"\(= +'[a-zA-Z0-9_]+ +'[a-zA-Z0-9_]+\)",  # (= 'a0 'a0)
+        ]
+        for pattern in trvial_identities:
+            if re.fullmatch(pattern, last_statement):
+                return True
+
+        return False
+
+    if(seed):
+        # generation = "[('a0 : nat) -> ('a1 : (= nat z z)) "
+        generation = seed
+        
+    
+    for i in range(max_it):
         tokens = tokenize(generation)
-        node, _, completions = Conjecture.parse(tokens, context.clone())
-
+        node, _, completions = Conjecture.parse(tokens, context.clone(), seed)
         if node:
+            # ex: 
+            # generation =          [('a0: (= z z)) -> (= o o)]
+            # generation_no_seed =  (= o o)]
+            # if not ":" in generation_no_seed and generation_no_seed[-1] == "]":
+            #     return generation_no_seed[:-1]
+            # if ":" in generation_no_seed and generation_no_seed[0] != "[":
+            #     return "[" + generation_no_seed
+            if has_trivial_outcome(generation):
+                #print('TRIVIAL OUTCOME:', generation)
+                # Reject this conjecture and start over
+                generation = seed if seed else ''
+                continue
+            #else:
             return generation
-
+        
         completions = list(set(space_completions(generation, completions)))
-
         choice = ''
 
         while choice not in completions:
@@ -398,6 +465,7 @@ def sample_conjecture(lm, context, max_it=100):
 
             # Add the maximum common prefix to the generation, which doesn't need the LM.
             generation += completions[0][:max_common_prefix_len]
+
             completions = [c[max_common_prefix_len:] for c in completions]
 
             if '' in completions:
