@@ -10,4 +10,5 @@ outputs/
 .vscode/
 minimo.code-workspace
 learning/present/
+vis/
 learning/test.py
