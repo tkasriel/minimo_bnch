@@ -18,6 +18,7 @@ from tqdm import tqdm
 import torch.multiprocessing as mp
 
 import peano
+import dsprover
 from problems import load_natural_number_game_problemset
 import worker
 from worker import StudentResult  # noqa
@@ -25,6 +26,7 @@ from hindsight import HindsightExample  # noqa
 from util import format_blocks_with_indent, sample_batch, setup_wandb, value_color, save_json
 from conjecture import AgentLM, Context, UsefulConjecture, sample_conjecture
 from proofsearch import ProofSearchAgent, make_agent
+from convert_to_lean import convert_arith
 import re
 
 def now() -> str:
@@ -127,11 +129,6 @@ async def teacher_loop(cfg: DictConfig):
                 useful_theorems = [UsefulConjecture(**thm) for thm in thms]
 
         print('Loaded', len(proven_conjectures), 'proven conjectures from previous run.')
-
-
-    if cfg.get('freeze_conjecturer', False):
-        print('Ablation: Freezing conjecturer.')
-
 
     conjecture_index = len(useful_theorems)
     with open('log.jsonl', 'w') as log:
@@ -273,7 +270,7 @@ async def teacher_loop(cfg: DictConfig):
             # 2- Try to prove each of the conjectures
 
             print('Running proof search...')
-            student_results: list[StudentResult] = []
+            student_results: list[dict] = []
             success_logprobs = []
             examples = []
             if cfg.use_multiprocessing:
@@ -319,37 +316,41 @@ async def teacher_loop(cfg: DictConfig):
                     process.close()
             else:
                 for index, conjecture in enumerate(tqdm(conjectures, miniters=1)):
-                    student_results.append(worker.try_prove(agent, background_theory, conjecture, True))
+                    conjecture_lean = convert_arith(conjecture, index, flag_matters=False)
+                    if conjecture_lean:
+                        result, logprob = dsprover.prove(f"problem{index}", conjecture_lean)
+                        if result:
+                            student_results.append({"problem": conjecture, "proof": result, "logprob": logprob})
             end_search_time = time.time()
 
             # 3a- Look at all the success logprobs and compute the easy/hard threhsold.
             for student_result in student_results:
-                if student_result.success:
-                    success_logprobs.append(student_result.logprob)
-                    for conj in useful_theorems:
-                        conj_name = conj.theorem.split(" : ")[0]
-                        if any([conj_name in r for r in student_result.proof]): #type: ignore
-                            conj.freq_used += 1
+                success_logprobs.append(student_result["logprob"])
 
+                # TODO: Add usefulness back
+                # if student_result.success:
+                    
+                #     for conj in useful_theorems:
+                #         conj_name = conj.theorem.split(" : ")[0]
+                #         if any([conj_name in r for r in student_result.proof]): #type: ignore
+                #             conj.freq_used += 1
 
                 outcomes.append({'iteration': i,
-                                'problem': student_result.problem,
-                                'problem_raw': comp_to_raw_dict[str(student_result.problem)],
-                                'proof': student_result.proof,
-                                'logprob': student_result.logprob,
-                                'actions': student_result.solution_actions,
-                                'hindsight': False,
-                                'seed_used': seed_used[str(student_result.problem)]
+                                'problem': student_result["problem"],
+                                'problem_raw': comp_to_raw_dict[str(student_result["problem"])],
+                                'proof': student_result["proof"],
+                                'logprob': student_result["logprob"],
+                                'seed_used': seed_used[str(student_result["problem"])]
                                 })
 
-                for h in student_result.hindsight_examples:
-                    outcomes.append({'iteration': i,
-                                    'problem': h.statement,
-                                    'proof': h.proof,
-                                    'logprob': h.logprob,
-                                    'actions': h.solution_actions,
-                                    'hindsight': True
-                                    })
+                # for h in student_result.hindsight_examples:
+                #     outcomes.append({'iteration': i,
+                #                     'problem': h.statement,
+                #                     'proof': h.proof,
+                #                     'logprob': h.logprob,
+                #                     'actions': h.solution_actions,
+                #                     'hindsight': True
+                #                     })
             save_json(outcomes, f'outcomes_{i}.json')
 
             if not success_logprobs:
@@ -370,74 +371,67 @@ async def teacher_loop(cfg: DictConfig):
                     'max =', np.max(success_logprobs))
 
             # Cut the least used theorems
-            useful_theorems = [thm for thm in useful_theorems if not (i - thm.iter_generated >= 3 and thm.freq_used == 0)]
-            useful_theorems.sort(key=lambda thm: thm.freq_used/(i-thm.iter_generated))
-            useful_theorems = useful_theorems[len(useful_theorems)//10:]
-            for thm in useful_theorems:
-                if thm.freq_used == 0:
-                    continue
-                thm_arr = list(map(str, thm.theorem.split(" : ")[1:]))
+            # useful_theorems = [thm for thm in useful_theorems if not (i - thm.iter_generated >= 3 and thm.freq_used == 0)]
+            # useful_theorems.sort(key=lambda thm: thm.freq_used/(i-thm.iter_generated))
+            # useful_theorems = useful_theorems[len(useful_theorems)//10:]
+            # for thm in useful_theorems:
+            #     if thm.freq_used == 0:
+            #         continue
+            #     thm_arr = list(map(str, thm.theorem.split(" : ")[1:]))
 
-                thm_str = (" : ".join(thm_arr))[:-1]
-                to_add = f'Conj:(useful) ' + d.elaborate(thm_str)
-                if not to_add in examples:
-                    examples.append(to_add)
+            #     thm_str = (" : ".join(thm_arr))[:-1]
+            #     to_add = f'Conj:(useful) ' + d.elaborate(thm_str)
+            #     if not to_add in examples:
+            #         examples.append(to_add)
 
             # 3b- Classify problems into easy/hard.
             for student_result in student_results:
                 # Outcome is the name of the first difficulty bucket that is larger than the logprob.
-                if student_result.success:
-                    outcome = next(k
-                                for i, (k, _) in enumerate(difficulty_buckets)
-                                if (student_result.logprob <= thresholds[i] or
-                                    i + 1 == len(difficulty_buckets)))
-                    if ": nat" in student_result.problem:
-                        useful_theorems.append(UsefulConjecture(f"c{conjecture_index:04} : " + student_result.problem + ".", i, 0))
-                    conjecture_index += 1
-                else:
-                    outcome = FAIL
-                
-
+                outcome = next(k
+                            for i, (k, _) in enumerate(difficulty_buckets)
+                            if (student_result["logprob"] <= thresholds[i] or
+                                i + 1 == len(difficulty_buckets)))
+                # if ": nat" in student_result.problem:
+                #     useful_theorems.append(UsefulConjecture(f"c{conjecture_index:04} : " + student_result.problem + ".", i, 0))
+                # conjecture_index += 1
                 if not cfg.get('freeze_conjecturer', False):
                     tags = [outcome]
                     # if ": nat" in student_result.problem: tags.append("useful")
                     # if student_result.problem.count("z") < 3: tags.append("few_zeros")
-                    
-                    examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
-                if student_result.success:
-                    proven_conjectures.append(student_result.problem)
-                    #proven_conjectures.append(student_result.problem_no_seed)
-                    proofs.append(student_result.proof)
+                    examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result["problem"]))
+                proven_conjectures.append(student_result["problem"])
+                #proven_conjectures.append(student_result.problem_no_seed)
+                proofs.append(student_result["proof"])
 
-                examples.extend(student_result.extracted_examples)
+                # examples.extend(student_result.extracted_examples)
 
-                long_ex = []
-                if os.path.exists("long_examples.json"):
-                    with open("long_examples.json", "r") as f:
-                        long_ex = json.load(f)
-                if cfg.train_policy_on_hindsight_examples:
-                    for h in student_result.hindsight_examples:
-                        if h.goal not in seen_hindsight_goals:
-                            if len(h.proof) > 4:
-                                long_ex.append({
-                                    "goal": str(h.goal),
-                                    "proof": h.proof,
-                                    "length": str(len(h.proof))
-                                })
-                            outcome = next(k
-                                        for i, (k, _) in enumerate(difficulty_buckets)
-                                        if h.logprob <= thresholds[i] or i + 1 == len(difficulty_buckets))
+                # long_ex = []
+                # if os.path.exists("long_examples.json"):
+                #     with open("long_examples.json", "r") as f:
+                #         long_ex = json.load(f)
+                # if cfg.train_policy_on_hindsight_examples:
+                #     for h in student_result.hindsight_examples:
+                #         if h.goal not in seen_hindsight_goals:
+                #             if len(h.proof) > 4:
+                #                 long_ex.append({
+                #                     "goal": str(h.goal),
+                #                     "proof": h.proof,
+                #                     "length": str(len(h.proof))
+                #                 })
+                #             outcome = next(k
+                #                         for i, (k, _) in enumerate(difficulty_buckets)
+                #                         if h.logprob <= thresholds[i] or i + 1 == len(difficulty_buckets))
 
-                            if not cfg.get('freeze_conjecturer', False):
-                                tags = [outcome]
-                                if ": nat" in student_result.problem: tags.append("useful")
-                                if student_result.problem.count("z") < 3: tags.append("few_zeros")
-                                try:
-                                    examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
-                                except BaseException:
-                                    pass
-                            examples.extend(h.examples)
-                            seen_hindsight_goals.add(h.goal)
+                #             if not cfg.get('freeze_conjecturer', False):
+                #                 tags = [outcome]
+                #                 if ": nat" in student_result.problem: tags.append("useful")
+                #                 if student_result.problem.count("z") < 3: tags.append("few_zeros")
+                #                 try:
+                #                     examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
+                #                 except BaseException:
+                #                     pass
+                #             examples.extend(h.examples)
+                #             seen_hindsight_goals.add(h.goal)
 
             log.write(json.dumps({'iteration': i,
                                 'msg': f'Training on {len(examples)} examples.'}))

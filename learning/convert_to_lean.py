@@ -107,9 +107,7 @@ def convert_arith(conjecture: str, it: int, flag_matters: bool = True) -> str | 
     out, flag = _convert(conjecture)
     if (flag or sum(uses.values()) == 0) and flag_matters:
         return False
-    
-    pre = "theorem problem" + str(it) + ": "
-    return pre + out + ":= by\n"
+    return out
 
 def convert_prop(conjecture: str, it: int, flag_matters: bool = True) -> str | bool:
     og_conj = conjecture
