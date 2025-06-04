@@ -5,9 +5,9 @@ from lean_interact import LeanREPLConfig, AutoLeanServer, Command
 torch.manual_seed(30)
 
 model_id = "deepseek-ai/DeepSeek-Prover-V2-7B"
-tokenizer = AutoTokenizer.from_pretrained(model_id)
-model = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto", torch_dtype=torch.bfloat16, trust_remote_code=True)
-server = AutoLeanServer(LeanREPLConfig())
+# tokenizer = AutoTokenizer.from_pretrained(model_id)
+# model = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto", torch_dtype=torch.bfloat16, trust_remote_code=True)
+# server = AutoLeanServer(LeanREPLConfig())
 
 
 def extract_code (encoded_response, logprobs) -> tuple[str, float] | tuple[None,None]:
@@ -48,6 +48,7 @@ def prove (problem_name : str, conjecture : str) -> tuple[str | None, float | No
     chat = [
         {"role": "user", "content": prompt}
     ]
+    return "test", 0.9
     input = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=True, return_tensors="pt").to(model.device)
     outputs = model.generate(input, max_new_tokens=8192, output_scores=True)
     transition_scores = model.compute_transition_scores (outputs.sequences, outputs.scores)
