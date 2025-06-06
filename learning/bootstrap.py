@@ -315,12 +315,15 @@ async def teacher_loop(cfg: DictConfig):
                     process.join()
                     process.close()
             else:
+                # lean_conjectures = [convert_arith(conjecture, index, flag_matters=False) for index, conjecture in enumerate(conjectures)]
+                # results, logprobs = dsprover.prove(conjectures)
+                # for result in results:
                 for index, conjecture in enumerate(tqdm(conjectures, miniters=1)):
                     conjecture_lean = convert_arith(conjecture, index, flag_matters=False)
                     if conjecture_lean:
                         result, logprob = dsprover.prove(f"problem{index}", conjecture_lean)
                         if result:
-                            student_results.append({"problem": conjecture, "proof": result, "logprob": logprob})
+                            student_results.append({"problem": conjecture, "translated": conjecture_lean, "proof": result, "logprob": logprob})
             end_search_time = time.time()
 
             # 3a- Look at all the success logprobs and compute the easy/hard threhsold.
@@ -334,9 +337,10 @@ async def teacher_loop(cfg: DictConfig):
                 #         conj_name = conj.theorem.split(" : ")[0]
                 #         if any([conj_name in r for r in student_result.proof]): #type: ignore
                 #             conj.freq_used += 1
-
+                print([f"{key} : {type(s)}" for key, s in student_result.items()])
                 outcomes.append({'iteration': i,
                                 'problem': student_result["problem"],
+                                "problem_translated" : student_result["translated"],
                                 'problem_raw': comp_to_raw_dict[str(student_result["problem"])],
                                 'proof': student_result["proof"],
                                 'logprob': student_result["logprob"],
