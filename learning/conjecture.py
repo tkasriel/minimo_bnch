@@ -20,7 +20,7 @@ from util import batch_inference, ALLOW_PROP_AS_TYPE
 # Arrow := "[" decl* Prop "]"
 
 
-ALLOW_PROP_AS_TYPE = False
+ALLOW_PROP_AS_TYPE = True
 
 class UsefulConjecture:
     theorem: str

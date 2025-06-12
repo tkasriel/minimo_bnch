@@ -10,6 +10,7 @@ n_conjectures: 200
 use_multiprocessing: true
 num_processes: 8
 mp_start_method: spawn
+batch_size: 3
 
 difficulty_buckets:
     - hard: 20

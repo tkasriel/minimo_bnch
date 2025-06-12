@@ -99,7 +99,7 @@ def convert_arith(conjecture: str, it: int, flag_matters: bool = True) -> str | 
     vars = {}
     uses = {}
     currvar = 0
-    if ": nat" not in conjecture:
+    if ": nat" not in conjecture and flag_matters:
         return False
     og_conj = conjecture
 
