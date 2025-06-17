@@ -12,3 +12,4 @@ minimo.code-workspace
 learning/present/
 vis/
 learning/test.py
+.env

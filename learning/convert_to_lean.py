@@ -120,3 +120,20 @@ def convert_prop(conjecture: str, it: int, flag_matters: bool = True) -> str | b
     
     pre = "theorem problem" + str(it) + ": "
     return pre + out + ":= by\n"
+
+if __name__ == "__main__":
+    nng = [
+        "[(x : nat) -> (= z (* z x))]",
+        "[('a : nat) -> (= (+ 'a (s z)) (s 'a))]",
+        "[('m : nat) -> (= (* z 'm) z)]",
+        "[('x : nat) -> ('y : nat) -> ('z : nat) -> (= (+ (* x 'y) z) (+ (* x 'y) z))]",
+        "[('x : nat) -> ('y : nat) -> (= 'y (+ 'x n7)) -> (= (* n2 'y) (* n2 (+ 'x n7)))]",
+        "[('a : nat) -> ('b : nat) -> (= (s 'a) 'b) -> (= (s (s 'a)) (s 'b))]",
+        "[('n : nat) -> (= (+ z 'n) 'n)]",
+        "[('a : nat) -> ('b : nat) -> ('c : nat) -> (= (+ (+ 'a 'b) 'c) (+ 'a (+ 'b 'c)))]",
+        "[('a : nat) -> ('b : nat) -> (= (+ (s 'a) 'b) (s (+ 'a 'b)))]",
+        "[('n : nat) -> (= (s 'n) (+ 'n (s z)))]",
+        "[('m : nat) -> (= (* 'm (s z)) 'm)]"
+    ]
+    output = [convert_arith(c, i, False) for i, c in enumerate(nng)]
+    print(output)
