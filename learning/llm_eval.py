@@ -1,0 +1,132 @@
+import json
+import os
+from openai import OpenAI
+import dotenv
+
+from convert_to_lean import convert_arith
+
+if not dotenv.load_dotenv():
+    raise ValueError("Need to set api key in .env")
+print (f"OPENAI API KEY: {os.getenv('OPENAI_API_KEY')}")
+model = OpenAI()
+
+def _extract_theorems_from_outcomes(outcomes_filepath: str) -> list[str]:
+    with open(outcomes_filepath) as f:
+        outcomes = json.load(f)
+    results = []
+    for i, o in enumerate(outcomes):
+        if o.get("hindsight", False):
+            continue
+        if "problem_translated" not in o.keys():
+            # Old non-translated problems, pre-dsprover
+            o["problem_translated"] = convert_arith(o["problem"], i, flag_matters=False)
+        results.append(f"theorem problem{i} : {o['problem_translated']}")
+    return results
+
+def _make_prompts (theorems: list[str]) -> list[list[dict[str]]]:
+    prompt = """You are tasked to judge whether a given lean theorem could be considered useful for an automatic theorem prover to have among its known theorems.
+This theorem prover has only access to the following axioms and known theorems:
+```
+Nat : type.
+0 : Nat.
+Nat.succ : [Nat -> Nat].
+1 : Nat.
++ : [Nat -> Nat -> Nat].
+* : [Nat -> Nat -> Nat].
+o_s : Nat.succ 0 = 1.
++_z : (n : Nat) -> n + 0 = n.
++_s : (n : Nat) -> (m : Nat) -> n + (Nat.succ m) = Nat.succ (n + m).
+*_z : (n : Nat) -> n * 0 = 0.
+*_s : (n : Nat) -> (m : Nat) -> n * (Nat.succ m) = n + n * m.
+nat_ind : (p : (Nat -> Prop)) -> (p z) -> ((n : Nat) -> (p n) -> p (Nat.succ n)) -> (n : Nat) -> (p n).
+```
+As well as access to the `rfl` and `rewrite` commands
+Here is the theorem you are to evaluate:
+```lean4
+{}
+```
+Think through the problem step by step. Translate the problem into natural language, then think of what the possible uses of the theorem could be, whether it's obviously true and whether it means something.
+On the last line, say either USEFUL or NOT USEFUL and nothing else.
+"""
+    chats = [[
+        {"role": "developer", "content": "You are an expert at evaluating lean theorems"},
+        {"role": "user", "content": prompt.format(theorem)}
+    ] for theorem in theorems]
+    return chats
+
+def send_batch_evaluation (outcomes_filepath: str, output_folder_path: str, name: str = "Minimo evaluation") -> None:
+    if not os.path.exists(output_folder_path):
+        raise FileNotFoundError(f"{os.path.join(__path__, output_folder_path)}")
+    batch_file = os.path.join(output_folder_path, "batch_request.jsonl")
+    
+    theorem_list = _extract_theorems_from_outcomes(outcomes_filepath)
+    print(f"Got {len(theorem_list)} theorems")
+    prompts = _make_prompts(theorem_list)
+
+    with open(batch_file, 'w') as f:
+        for i, chat in enumerate(prompts):
+            request_dict = {
+                "custom_id": f"minimo-eval-{i}",
+                "method": "POST",
+                "url": "/v1/chat/completions",
+                "body": {
+                    "model": "gpt-4.1",
+                    "messages": chat,
+                    "max_tokens": 8192
+                }
+            }
+            json.dump(request_dict, f)
+            if i < len(prompts) - 1:
+                f.write('\n')
+    openai_file = model.files.create(file=open(batch_file, "rb"), purpose="batch")
+    model.batches.create(
+        input_file_id=openai_file.id,
+        completion_window='24h',
+        endpoint="/v1/chat/completions",
+        metadata={
+            "name": name
+        }
+    )
+
+def list_batch_evaluations (output_folder: str):
+    results = model.batches.list(limit=5)
+    with open(os.path.join(output_folder, "batch_list.json"), "w") as f:
+        f.write(results.to_json())
+
+def cancel_batch (id: str):
+    model.batches.cancel(batch_id=id)
+
+def get_batch_evaluations (id: str, output_folder: str):
+    batch = model.batches.retrieve(batch_id=id)
+    success = batch.request_counts.completed
+    useful = 0
+    malformed = 0
+    if batch.output_file_id:
+        output = model.files.content(file_id=batch.output_file_id)
+        text = output.response.text
+        with open(os.path.join(output_folder, "useful_theorems.txt"), "w") as use_f:
+            # with open(os.path.join(output_folder, ""))
+            for res in text.strip().split("\n"):
+                res_dict = json.loads(res)
+                # print(res_dict)
+                response = res_dict["response"]["body"]["choices"][0]["message"]["content"].split("\n")
+                if "USEFUL" not in response[-1]:
+                    malformed += 1
+                elif "NOT" not in response[-1]:
+                    useful += 1
+                    use_f.writelines(response)
+                    use_f.write("\n----\n\n")
+    
+    print ("RESULTS")
+    print (f"Succesful runs: {success}/{batch.request_counts.total}")
+    print (f"Useful theorems: {useful}/{success}")
+    print (f"Malformed results: {malformed}/{success}")
+    # for res in results.:
+
+
+OUTPUT_FOLDER = "/Users/tkasriel/code/rsh/minimo/learning/outputs/llm_eval2"
+
+# send_batch_evaluation("/Users/tkasriel/code/rsh/minimo/learning/outputs/orig_minimo/outcomes_arith.json", OUTPUT_FOLDER, "Original Minimo Arithmetic Evaluation")
+list_batch_evaluations("/Users/tkasriel/code/rsh/minimo/learning/outputs/llm_eval2")
+# cancel_batch("batch_68523b4c6ea081908042e6131d7bea8e")
+get_batch_evaluations("batch_68523c3f921c8190a46b4f7f0d508d37", OUTPUT_FOLDER)
