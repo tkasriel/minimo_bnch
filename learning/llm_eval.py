@@ -1,5 +1,6 @@
 import json
 import os
+import random
 from openai import OpenAI
 import dotenv
 
@@ -10,7 +11,7 @@ if not dotenv.load_dotenv():
 print (f"OPENAI API KEY: {os.getenv('OPENAI_API_KEY')}")
 model = OpenAI()
 
-def _extract_theorems_from_outcomes(outcomes_filepath: str) -> list[str]:
+def _extract_theorems_from_outcomes(outcomes_filepath: str, logprobs: bool = False) -> list[str] | list[tuple]:
     with open(outcomes_filepath) as f:
         outcomes = json.load(f)
     results = []
@@ -20,7 +21,11 @@ def _extract_theorems_from_outcomes(outcomes_filepath: str) -> list[str]:
         if "problem_translated" not in o.keys():
             # Old non-translated problems, pre-dsprover
             o["problem_translated"] = convert_arith(o["problem"], i, flag_matters=False)
-        results.append(f"theorem problem{i} : {o['problem_translated']}")
+        thm_str = f"theorem problem{i} : {o['problem_translated']}"
+        if logprobs:
+            results.append((o["problem_translated"], o["logprob"]))
+        else:
+            results.append(thm_str)
     return results
 
 def _make_prompts (theorems: list[str]) -> list[list[dict[str]]]:
@@ -122,6 +127,42 @@ def get_batch_evaluations (id: str, output_folder: str):
     print (f"Useful theorems: {useful}/{success}")
     print (f"Malformed results: {malformed}/{success}")
     # for res in results.:
+
+def make_graph (outcomes_filepath: str, output_folder: str) -> None:
+    import dsprover
+    random.seed(8)
+    thm_logprob = random.sample(_extract_theorems_from_outcomes(outcomes_filepath), 100)
+    adj = {}
+    to_prove = []
+    for thm_1 in thm_logprob:
+        for thm_2 in thm_logprob:
+            if thm_1 == thm_2:
+                continue
+            new_theorem = f"theorem problem : ({thm_1[0]}) -> {thm_2[0]} := by sorry"
+            to_prove.append(new_theorem)
+    res = dsprover.prove(to_prove)
+    index = 0
+    for thm_1 in thm_logprob:
+        for thm_2 in thm_logprob:
+            if thm_1 == thm_2:
+                index += 1
+                continue
+            logprob_new = res[index][1]
+            if logprob_new > thm_2[1]:
+                if thm_1 not in adj:
+                    adj[thm_1] = []
+                adj[thm_1].append((thm_2, logprob_new - thm_2[1]))
+            index += 1
+    with open(os.path.join(output_folder, "graph.csv"), "w") as f:
+        for k,v in adj.items():
+            for edge in v:
+                f.write(f"{k},{edge[0]},{edge[1]}\n")
+            
+
+            
+
+
+
 
 
 OUTPUT_FOLDER = "/Users/tkasriel/code/rsh/minimo/learning/outputs/llm_eval2"

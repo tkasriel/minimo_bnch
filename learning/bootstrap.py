@@ -3,10 +3,12 @@
 """Implements the conjecture-prove bootstrapping learning loop."""
 
 import asyncio
+import math
 import os
 import io
 import json
 import datetime
+import random
 import time
 from typing import Any
 
@@ -127,7 +129,6 @@ async def teacher_loop(cfg: DictConfig):
 
         print('Loaded', len(proven_conjectures), 'proven conjectures from previous run.')
 
-    conjecture_index = len(useful_theorems)
     with open('log.jsonl', 'w') as log:
         for i in range(start_iteration, cfg.iterations):
             background_theory = worker.BackgroundTheory(theory + "\n\n" + "\n\n".join([thm.theorem for thm in useful_theorems]), premises + [thm.theorem.split(" : ")[0] for thm in useful_theorems])
@@ -280,14 +281,6 @@ async def teacher_loop(cfg: DictConfig):
                                 'seed_used': seed_used[str(student_result["problem"])]
                                 })
 
-                # for h in student_result.hindsight_examples:
-                #     outcomes.append({'iteration': i,
-                #                     'problem': h.statement,
-                #                     'proof': h.proof,
-                #                     'logprob': h.logprob,
-                #                     'actions': h.solution_actions,
-                #                     'hindsight': True
-                #                     })
             save_json(outcomes, f'outcomes_{i}.json')
 
             if not success_logprobs:
@@ -316,6 +309,14 @@ async def teacher_loop(cfg: DictConfig):
                 #     to_add = f'Conj:(useful) ' + d.elaborate(thm_str)
                 #     if not to_add in examples:
                 #         examples.append(to_add)
+            # Calculate usefulness
+            hard_problems = [s for s in student_results if s["logprob"] <= thresholds[-1]]
+            results_to_test = []
+            for hard_problem in hard_problems:
+                potential_theorems = random.sample(proven_conjectures, math.floor(math.sqrt(len(proven_conjectures))))
+
+
+
 
             # 3b- Classify problems into easy/hard.
             for student_result in student_results:
@@ -381,7 +382,6 @@ async def teacher_loop(cfg: DictConfig):
                 tm.write(f"Training took {train_end_time-end_search_time}s\n")
                 tm.write(f"Total time taken: {train_end_time-start_time}s\n")
 
-            save_json([thm.to_dict() for thm in useful_theorems], f"generated_theorems_{i}.json")
             save_json(examples, f'examples_{i}.json')
             save_json(outcomes, f'outcomes_{i}.json')
             print(len(examples), 'accumulated training examples.')
