@@ -83,6 +83,8 @@ def prove (conjectures : list[str], debug: bool = False) -> list[tuple[str | Non
 
     results = []
     for generated_i, transition_i in zip(generated_tokens, logprobs):
+        if debug:
+            print(tokenizer.decode(generated_i))
         lean_code, logprob = extract_code(generated_i, transition_i, debug=debug)
         if not lean_code:
             results.append((None, 0.0))
