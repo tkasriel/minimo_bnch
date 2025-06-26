@@ -102,29 +102,30 @@ async def teacher_loop(cfg: DictConfig):
         while os.path.exists(f'{i}.pt'):
             i += 1
         i -= 1
-        if os.path.exists(f"{i}.5.pt"):
-            agent = torch.load(f'{i}.5.pt')
-            start_iteration = i + 1
-            with open(f"examples_{i}.json") as f:
-                examples = json.load(f)
-                agent.train(examples)
-        else:
-            start_iteration = i
-            agent = torch.load(f'{i}.pt', map_location=None if torch.cuda.is_available() else "cpu", weights_only=False)
-            print('Loaded agent from', f'{i}.pt')
-        # Load examples and outcomes.
-        if i > 0:
-            with open(f'outcomes_{i-1}.json', 'r') as f:
-                outcomes = json.load(f)
-                proven_conjectures = [o['problem'] for o in outcomes
-                                      if o['hindsight'] is False and
-                                         o['proof'] is not None]
-                seen_hindsight_goals = {o['problem'] for o in outcomes
-                                        if o['hindsight'] and o['proof'] is not None}
-                comp_to_raw_dict = {o['problem']: o['problem_raw'] for o in outcomes if "problem_raw" in o.keys()}
-            with open(f"generated_theorems_{i-1}.json") as f:
-                thms = json.load(f)
-                useful_theorems = [UsefulConjecture(**thm) for thm in thms]
+        if i >= 0:
+            if os.path.exists(f"{i}.5.pt"):
+                agent = torch.load(f'{i}.5.pt')
+                start_iteration = i + 1
+                with open(f"examples_{i}.json") as f:
+                    examples = json.load(f)
+                    agent.train(examples)
+            else:
+                start_iteration = i
+                agent = torch.load(f'{i}.pt', map_location=None if torch.cuda.is_available() else "cpu", weights_only=False)
+                print('Loaded agent from', f'{i}.pt')
+            # Load examples and outcomes.
+            if i > 0:
+                with open(f'outcomes_{i-1}.json', 'r') as f:
+                    outcomes = json.load(f)
+                    proven_conjectures = [o['problem'] for o in outcomes
+                                        if o['hindsight'] is False and
+                                            o['proof'] is not None]
+                    seen_hindsight_goals = {o['problem'] for o in outcomes
+                                            if o['hindsight'] and o['proof'] is not None}
+                    comp_to_raw_dict = {o['problem']: o['problem_raw'] for o in outcomes if "problem_raw" in o.keys()}
+                with open(f"generated_theorems_{i-1}.json") as f:
+                    thms = json.load(f)
+                    useful_theorems = [UsefulConjecture(**thm) for thm in thms]
 
         print('Loaded', len(proven_conjectures), 'proven conjectures from previous run.')
 
@@ -370,9 +371,10 @@ async def teacher_loop(cfg: DictConfig):
                     'max =', np.max(success_logprobs))
 
             # Cut the least used theorems
-            useful_theorems = [thm for thm in useful_theorems if not (i - thm.iter_generated >= 3 and thm.freq_used == 0)]
-            useful_theorems.sort(key=lambda thm: thm.freq_used/(i-thm.iter_generated))
-            useful_theorems = useful_theorems[len(useful_theorems)//10:]
+            useful_theorems = []
+            # useful_theorems = [thm for thm in useful_theorems if not (i - thm.iter_generated >= 3 and thm.freq_used == 0)]
+            # useful_theorems.sort(key=lambda thm: thm.freq_used/(i-thm.iter_generated))
+            # useful_theorems = useful_theorems[len(useful_theorems)//10:]
             for thm in useful_theorems:
                 if thm.freq_used == 0:
                     continue
@@ -391,8 +393,8 @@ async def teacher_loop(cfg: DictConfig):
                                 for i, (k, _) in enumerate(difficulty_buckets)
                                 if (student_result.logprob <= thresholds[i] or
                                     i + 1 == len(difficulty_buckets)))
-                    if ": nat" in student_result.problem:
-                        useful_theorems.append(UsefulConjecture(f"c{conjecture_index:04} : " + student_result.problem + ".", i, 0))
+                    # if ": nat" in student_result.problem:
+                    #     useful_theorems.append(UsefulConjecture(f"c{conjecture_index:04} : " + student_result.problem + ".", i, 0))
                     conjecture_index += 1
                 else:
                     outcome = FAIL

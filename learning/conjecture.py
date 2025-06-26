@@ -387,7 +387,7 @@ def pretty_print_conjecture(conjecture: str) -> str:
 
 MAX_OPEN_PARENS = 8
 
-def sample_conjecture(lm, context, seed = None, max_it=100):
+def sample_conjecture(lm, context, previous_conjectures = list[str], seed = None, max_it=100):
     generation = ''
 
     def has_trivial_outcome(conjecture):
@@ -473,8 +473,14 @@ def sample_conjecture(lm, context, seed = None, max_it=100):
 
             # Sample the next character using the LM.
             choices = list(set(c[0] for c in completions))
-            choice = random.choices(choices, list(map(math.exp,
-                                                      lm.score(choices, mean=False, prefix=generation))))[0]
+            scores = list(map(math.exp, lm.score(choices, mean=False, prefix=generation)))
+            
+            # Favor novel directions
+            weighted_scores = []
+            for c, s in zip(choices, scores):
+                count = sum([1 if generation + c == t[:len(generation)+1] else 0 for t in previous_conjectures])
+                weighted_scores.append(s / (count + 1))
+            choice = random.choices(choices, weights=weighted_scores)[0]
             generation += choice
             # Filter completions to those starting with the chosen character and drop the character.
             completions = [c[1:] for c in completions if c.startswith(choice)]

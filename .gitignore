@@ -11,3 +11,4 @@ outputs/
 minimo.code-workspace
 learning/present/
 learning/test.py
+.env
