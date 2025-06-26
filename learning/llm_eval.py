@@ -142,16 +142,17 @@ def make_graph (outcomes_filepath: str, output_folder: str) -> None:
         for thm_2 in thm_logprob:
             if thm_1 == thm_2:
                 continue
-            if thm_2[0] != '((v0 : Nat) -> (v1 : (v0 = 0)) -> (v2 : (v0 = v0)) -> (v3 : ((Nat.succ 0) = v0)) -> (v4 : (0 = v0)) -> (v5 : (0 = v0)) -> ((Nat.succ (Nat.succ 0)) = 0))':
-                continue
+            # if thm_2[0] != '((v0 : Nat) -> (v1 : (v0 = 0)) -> (v2 : (v0 = v0)) -> (v3 : ((Nat.succ 0) = v0)) -> (v4 : (0 = v0)) -> (v5 : (0 = v0)) -> ((Nat.succ (Nat.succ 0)) = 0))':
+            #     continue
             print(len(to_prove))
             new_theorem = f"({thm_1[0]}) -> {thm_2[0]}"
             to_prove.append(new_theorem)
     print(len(to_prove))
-    res = dsprover.prove(to_prove, debug=True)
-    with open(os.path.join(output_folder, "res_chosen.txt"), "w") as f:
-        f.write("\n\n\n".join(res))
-    return
+    res = [r[0] for r in dsprover.prove(to_prove, debug=True) if r[0]]
+    # with open(os.path.join(output_folder, "res_chosen.txt"), "w") as f:
+
+    #     f.write("\n\n\n".join(res))
+    # return
     index = 0
     for thm_1 in thm_logprob:
         for thm_2 in thm_logprob:
