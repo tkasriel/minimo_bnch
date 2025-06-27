@@ -9,6 +9,7 @@ import math
 
 import peano
 from util import batch_inference, ALLOW_PROP_AS_TYPE
+from convert_to_lean import convert_extended
 
 
 # Grammar for conjectures:
@@ -132,6 +133,7 @@ class App(Node):
         if not (fn_node and fn_node.name):
             return None, consumed, completions
 
+        # print(f"Node name: {fn_node.name}")
         fn_input_types, _fn_output_type = context.derivation.arrow_type_signature(fn_node.name)
         n_args = len(fn_input_types)
 
@@ -387,7 +389,7 @@ def pretty_print_conjecture(conjecture: str) -> str:
 
 MAX_OPEN_PARENS = 8
 
-def sample_conjecture(lm, context, seed = None, max_it=100):
+def sample_conjecture(lm, context, seed = "", max_it=100):
     generation = ''
 
     def has_trivial_outcome(conjecture):
@@ -430,6 +432,8 @@ def sample_conjecture(lm, context, seed = None, max_it=100):
     for i in range(max_it):
         tokens = tokenize(generation)
         node, _, completions = Conjecture.parse(tokens, context.clone(), seed)
+        # print(f"Current: {generation}")
+        # print(f"Completions: {completions}")
         if node:
             # ex: 
             # generation =          [('a0: (= z z)) -> (= o o)]
@@ -445,7 +449,7 @@ def sample_conjecture(lm, context, seed = None, max_it=100):
                 continue
             #else:
             return generation
-        
+
         completions = list(set(space_completions(generation, completions)))
         choice = ''
 
@@ -695,4 +699,26 @@ class ConjectureCompletionEngineTest(unittest.TestCase):
         context = Context(d, None, [])
         lm = RandomLM()
         for _ in range(50):
-            print(sample_conjecture(lm, context, 50))
+            print(sample_conjecture(lm, context, "", 50))
+
+    def test_extended_conjectures(self):
+        with open('theories/extended.p', 'r') as f:
+            theory = f.read()
+
+        d = peano.PyDerivation()
+        d.incorporate(theory)
+
+        context = Context(d, None, [])
+        lm = RandomLM()
+        for i in range(1000):
+            conjecture = sample_conjecture(lm, context, "", 50)
+            if(conjecture):
+                conjecture = d.contract(conjecture)
+                conjecture_lean = convert_extended(conjecture, i, False)
+                print(conjecture_lean)
+            else:
+                print(conjecture)
+
+if __name__ == "__main__":
+    test_extended = ConjectureCompletionEngineTest()
+    test_extended.test_extended_conjectures()

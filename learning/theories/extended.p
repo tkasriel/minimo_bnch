@@ -39,18 +39,14 @@ nat_ind : [('p : [nat -> prop]) -> ('p z) -> [('n : nat) -> ('p 'n) -> ('p (s 'n
 succ_inj : [('a : nat) -> ('b : nat) -> (= (s 'a) (s 'b)) -> (= 'a 'b)].
 
 
+leq : [nat -> nat -> prop].
+lt : [nat -> nat -> prop].
+gt : [nat -> nat -> prop].
 
-exists : [('t : type) -> ('p : ['t -> prop]) -> prop].
-ex_intro : [('t : type) -> ('p : ['t -> prop]) -> ('x : 't) -> ('p 'x) -> (exists 't 'p)].
-ex_wit : [('t : type) -> ('p : ['t -> prop]) -> (exists 't 'p) -> 't].
-ex_elim : [('t : type) -> ('p : ['t -> prop]) -> ('e : (exists 't 'p)) -> ('p (ex_wit 't 'p 'e))].
+leq_n_n : [('n : nat) -> (leq 'n 'n)].
+leq_n_sn : [('n : nat) -> (leq 'n (s 'n))].
 
-#backward ex_intro infer infer infer subgoal.
-#forward ex_wit.
-#forward ex_elim ('e : (exists 't 'p)).
-
-leq : [nat -> nat -> prop] = (lambda ('a : nat, 'b : nat)
-                                     (exists nat (lambda ('c : nat) (= (+ 'a 'c) 'b)))).
+leq_trans : [(leq 'a 'b) -> (leq 'b 'c) -> (leq 'a 'c)].
 
 #forward rewrite.
 #forward eq_refl.
@@ -81,14 +77,29 @@ or_elim : [('p : prop) -> ('q : prop) -> (or 'p 'q) ->
 false_elim : [('p : prop) -> false -> 'p].
 #backward false_elim infer infer.
 
-not : [prop -> prop] = (lambda ('p0 : prop) ['p0 -> false]).
+not : [prop -> prop].
 
-iff : [prop -> prop -> prop] = (lambda ('p1 : prop, 'p2 : prop) (and ['p1 -> 'p2] ['p2 -> 'p1])).
+/* Introduction rule for negation */
+#backward not_i.
+not_i : [('P : prop) -> ['P -> false] -> (not 'P)].
+/* Elimination rule for negation */
+not_e : [('P : prop) -> (not 'P) -> 'P -> false].
+#backward exfalso.
+exfalso : [false -> ('P : prop) -> 'P].
+
+iff : [prop -> prop -> prop].
+
+/* Introduction rules for equivalence */
+#backward iff_i.
+iff_i : [('P : prop) -> ('Q : prop) -> ['P -> 'Q] -> ['Q -> 'P] -> (iff 'P 'Q)].
+/* Elimination rules for equivalence */
+#forward iff_el ('_ : (iff 'P 'Q)).
+iff_el : [('P : prop) -> ('Q : prop) -> (iff 'P 'Q) -> ['P -> 'Q]].
+#forward iff_er ('_ : (iff 'P 'Q)).
+iff_er : [('P : prop) -> ('Q : prop) -> (iff 'P 'Q) -> ['Q -> 'P]].
 
 zero_ne_succ : [('a : nat) -> (not (= z (s 'a)))].
 #forward zero_ne_succ.
-
-empty : type.
 
 #forward a_zero_add ((+ z 'n) : nat).
 #forward a_succ_add ((+ (s 'a) 'b) : nat).

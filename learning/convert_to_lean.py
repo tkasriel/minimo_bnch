@@ -51,7 +51,7 @@ def _convert(conjecture: str, pre="") -> tuple[str, bool]:
         if len(atoms) == 3 and atoms[1] != "->" and atoms[1] != "→":
             if atoms[1] == ":":
                 return f"({_handle_singleton(atoms[0])} : {_convert(atoms[2])[0]})", False
-            if atoms[0] in "+*=" or atoms[0] in ["∧", "∨", "↔"]:
+            if atoms[0] in "+*=≤<>^" or atoms[0] in ["∧", "∨", "↔"]:
                 op1, flag1 = _convert(atoms[1])
                 op2, flag2 = _convert(atoms[2])
                 if op1 == "false" or op2 == "false" and atoms[0] == "∧":
@@ -68,8 +68,7 @@ def _convert(conjecture: str, pre="") -> tuple[str, bool]:
                     flag = True
                 return f"({op1} {atoms[0]} {op2})", flag
                 
-            print(conjecture)
-            sys.exit()
+            raise Exception(f"Conversion failed: {conjecture}")
         if len(atoms) == 2 and atoms[0] == "Nat.succ":
             op, flag = _convert(atoms[1])
             return f"(Nat.succ {op})", flag
@@ -115,6 +114,22 @@ def convert_prop(conjecture: str, it: int, flag_matters: bool = True) -> str | b
     if ": Prop" not in conjecture:
         return False
     out, flag = _convert (conjecture)
+    if flag and flag_matters:
+        return False
+    
+    pre = "theorem problem" + str(it) + ": "
+    return pre + out + ":= by\n"
+
+def convert_extended(conjecture: str, it: int, flag_matters: bool = True) -> str | bool:
+    og_conj = conjecture
+    conjecture = conjecture.replace("iff", "↔").replace ("->", "→").replace("'", "").replace("[", "(").replace("]", ")").replace("and", "∧").replace("or", "∨")
+    conjecture = conjecture.replace("z", "0").replace("o", "1").replace("nat", "Nat").replace("s", "Nat.succ").replace("'", "").replace("gt", ">").replace("lt", "<").replace("leq", "≤").replace("pr1p", "Prop").replace("falNat.succe", "false")
+    conjecture = conjecture.replace("n1t", "not")
+
+    if "a0" not in conjecture:
+        return False
+    
+    out, flag = _convert(conjecture)
     if flag and flag_matters:
         return False
     
