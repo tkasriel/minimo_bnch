@@ -38,15 +38,9 @@ nat_ind : [('p : [nat -> prop]) -> ('p z) -> [('n : nat) -> ('p 'n) -> ('p (s 'n
 #forward succ_inj ((= (s 'a) (s 'b)) : 't).
 succ_inj : [('a : nat) -> ('b : nat) -> (= (s 'a) (s 'b)) -> (= 'a 'b)].
 
-
 leq : [nat -> nat -> prop].
 lt : [nat -> nat -> prop].
 gt : [nat -> nat -> prop].
-
-leq_n_n : [('n : nat) -> (leq 'n 'n)].
-leq_n_sn : [('n : nat) -> (leq 'n (s 'n))].
-
-leq_trans : [(leq 'a 'b) -> (leq 'b 'c) -> (leq 'a 'c)].
 
 #forward rewrite.
 #forward eq_refl.
