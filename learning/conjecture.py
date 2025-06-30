@@ -26,17 +26,20 @@ class UsefulConjecture:
     theorem: str
     iter_generated: int
     freq_used: int
+    tot_improvement: int
 
-    def __init__(self, theorem: str, iter_generated: str | int, freq_used: str | int):
+    def __init__(self, theorem: str, iter_generated: str | int, freq_used: str | int, tot_improvement: str | float):
         self.theorem = theorem
         self.iter_generated = int(iter_generated)
         self.freq_used = int(freq_used)
+        self.tot_improvement = float(tot_improvement)
     
     def to_dict(self) -> dict[str, str]:
         return {
             "theorem": self.theorem,
             "iter_generated": str(self.iter_generated),
             "freq_used": str(self.freq_used),
+            "tot_improvement": str(self.tot_improvement),
         }
 
 @dataclass
@@ -59,7 +62,7 @@ class Context:
 
 class Node:
     @staticmethod
-    def parse(tokens: list[str], context) -> ('Node', int, list[str]):
+    def parse(tokens: list[str], context) -> ('Node', int, list[str]): # type: ignore
         raise NotImplementedError
 
     def __str__(self) -> str:
@@ -387,7 +390,7 @@ def pretty_print_conjecture(conjecture: str) -> str:
 
 MAX_OPEN_PARENS = 8
 
-def sample_conjecture(lm, context, previous_conjectures = list[str], seed = None, max_it=100):
+def sample_conjecture(lm, context, previous_conjectures: list[str], seed = None, max_it=100):
     generation = ''
 
     def has_trivial_outcome(conjecture):
@@ -478,7 +481,7 @@ def sample_conjecture(lm, context, previous_conjectures = list[str], seed = None
             # Favor novel directions
             weighted_scores = []
             for c, s in zip(choices, scores):
-                count = sum([1 if generation + c == t[:len(generation)+1] else 0 for t in previous_conjectures])
+                count = sum([(1 if generation + c == t[:len(generation)+1] else 0) for t in previous_conjectures])
                 weighted_scores.append(s / (count + 1))
             choice = random.choices(choices, weights=weighted_scores)[0]
             generation += choice

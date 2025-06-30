@@ -3,10 +3,12 @@
 """Implements the conjecture-prove bootstrapping learning loop."""
 
 import asyncio
+import math
 import os
 import io
 import json
 import datetime
+import random
 import time
 from typing import Any
 
@@ -37,28 +39,74 @@ STOP = "STOP"
 CONJECTURE = "CONJECTURE"
 PROOF = "PROOF"
 
-def process_main(id: int, agent: ProofSearchAgent, background_theory: worker.BackgroundTheory, instruction_queue: mp.Queue, output_queue: mp.Queue):
+def process_main(id: int, agent: ProofSearchAgent, instruction_queue: mp.Queue, output_queue: mp.Queue):
     instruction: tuple[str,str] = ("","")
     
     # Unfortunately PyDerivation is not pickle-able and I don't know enough rust to fix that
-    d = peano.PyDerivation()
-    d.incorporate(background_theory.theory)
-    context = Context(d, None, [])
+    current_theory = ""
+    background_theory = None
+    d = None
+    context = None
     print(f"Process {id} ready")
 
     while instruction[0] != STOP:
         instruction = instruction_queue.get()
+        # input will have the following:
+        # (INSTRUCTION, input, theory, addtn args)
+        # We'll first process the third
+        if instruction[2][0] != current_theory:
+            current_theory = instruction[2][0]
+            background_theory = worker.BackgroundTheory(*instruction[2])
+            d = peano.PyDerivation()
+            d.incorporate(current_theory)
+            context = Context(d, None, [])
         # print(f"Received instruction: {instruction}")
         if instruction and type(instruction) is tuple:
             if instruction[0] == CONJECTURE:
                 seed_statement = instruction[1]
-                new_conj = sample_conjecture(AgentLM(agent, CONJECTURE_PROMPT), context, seed=seed_statement)
+                previous_conjectures = instruction[3]
+                new_conj = sample_conjecture(AgentLM(agent, CONJECTURE_PROMPT), context, previous_conjectures, seed=seed_statement)
                 output_queue.put((CONJECTURE, new_conj, seed_statement))
             elif instruction[0] == PROOF:
                 thm_to_prove = instruction[1]
                 result = worker.try_prove(agent, background_theory, thm_to_prove, verbose=False)
                 output_queue.put((PROOF, result, None))
     output_queue.put((STOP, id, None))
+
+def batch_prove (cfg, conjectures: list[str], theory: str, premises: list[str], instruction_queue : mp.Queue, output_queue: mp.Queue) -> list[StudentResult]:
+    for conjecture in conjectures:
+        instruction_queue.put((PROOF, conjecture, (theory, premises)))
+    
+    # Process results
+    num_dead = 0
+    student_results = []
+    progress_bar = tqdm(total=len(conjectures))
+    while len(student_results) < len(conjectures) and num_dead < cfg.num_processes:
+        res_type, res, _ = output_queue.get()
+        if res_type != PROOF:
+            # Leftover from conjecturing. We could use them, but for now I'll just throw them out
+            continue
+        if res_type == STOP:
+            num_dead += 1
+            print(f"Process {res} is done")
+            continue
+        assert res_type == PROOF
+        if res.error:
+            print("Proof search errored.")
+            print(res.error)
+            continue
+        if res.success:
+            assert res.proof
+            print("Proof search was a success! Proof actions taken:")
+            print("\t"+"\n\t".join(res.solution_actions))
+            print(f"logprob: {res.logprob}")
+        else:
+            print("Proof search failed")
+        print(f"Got {len(res.hindsight_examples)} hindsight examples\n")
+        student_results.append(res)
+        progress_bar.update(1)
+    progress_bar.close()
+    return student_results
 
 
 async def teacher_loop(cfg: DictConfig):
@@ -135,33 +183,31 @@ async def teacher_loop(cfg: DictConfig):
 
 
     conjecture_index = len(useful_theorems)
+    if cfg.use_multiprocessing:
+        # Start multiprocessing
+        num_processes = cfg.num_processes
+        instruction_queue: mp.Queue = mp.Queue()
+        output_queue: mp.Queue = mp.Queue()
+        processes: list[mp.Process] = []
+        agent.share_memory()
+        for j in range(num_processes):
+            new_process = mp.Process(target=process_main,kwargs={"id": j,
+                                                                "agent":agent, 
+                                                                "instruction_queue": instruction_queue, 
+                                                                "output_queue": output_queue})
+            new_process.start()
+            processes.append(new_process)
     with open('log.jsonl', 'w') as log:
+        
         for i in range(start_iteration, cfg.iterations):
             start_time = time.time()
             torch.save(agent, f'{i}.pt')
             print(f"current it: {i}")
-            background_theory = worker.BackgroundTheory(theory + "\n\n" + "\n\n".join([thm.theorem for thm in useful_theorems]), premises + [thm.theorem.split(" : ")[0] for thm in useful_theorems])
-
-            d = permanent_deriv.clone()
-            if i > 0:
-                d.incorporate("\n\n".join(map(lambda x: x.theorem, useful_theorems)))
-            context = Context(d, None, [])
-            num_processes = cfg.num_processes
-
-            # Start multiprocessing
-            if cfg.use_multiprocessing:
-                instruction_queue: mp.Queue = mp.Queue()
-                output_queue: mp.Queue = mp.Queue()
-                processes: list[mp.Process] = []
-                agent.share_memory()
-                for j in range(num_processes):
-                    new_process = mp.Process(target=process_main,kwargs={"id": j,
-                                                                         "agent":agent, 
-                                                                         "background_theory": background_theory, 
-                                                                         "instruction_queue": instruction_queue, 
-                                                                         "output_queue": output_queue})
-                    new_process.start()
-                    processes.append(new_process)
+            background_theory = worker.BackgroundTheory(theory, premises)
+            # if i > 0:
+                # d.incorporate("\n\n".join(map(lambda x: x.theorem, useful_theorems)))
+            context = Context(permanent_deriv, None, [])
+            
 
             # 1- Run conjecturing model to obtain N conjectures.
             print(now(), f'Iteration #{i}: making conjectures...')
@@ -211,6 +257,7 @@ async def teacher_loop(cfg: DictConfig):
 
 
             def get_seed_statement():
+                return None
                 if(np.random.random() > 0.5 and len(proven_conjectures) > 0):
                     # seed_conj = "[('a0: nat) -> ('a1: (= 'a0 z)) -> (= (s 'a0) o)]"
                     seed_conj = np.random.choice(proven_conjectures)
@@ -236,20 +283,23 @@ async def teacher_loop(cfg: DictConfig):
 
             if cfg.use_multiprocessing:
                 for j in range(min(num_processes, cfg.n_conjectures)):
-                    instruction_queue.put((CONJECTURE, get_seed_statement())) # You can put the seed statement here
+                    instruction_queue.put((CONJECTURE, get_seed_statement(), (theory, premises), proven_conjectures)) # You can put the seed statement here
 
             while len(conjectures) < cfg.n_conjectures:
                 if cfg.use_multiprocessing:
                     _, proposal, seed_cur = output_queue.get()
-                    instruction_queue.put((CONJECTURE, get_seed_statement()))
+                    instruction_queue.put((CONJECTURE, get_seed_statement(), (theory, premises), conjectures + proven_conjectures))
                 else:
                     seed = get_seed_statement()
-                    proposal = sample_conjecture(AgentLM(agent, CONJECTURE_PROMPT), context, seed=seed)
+                    proposal = sample_conjecture(AgentLM(agent, CONJECTURE_PROMPT), context, conjectures + proven_conjectures, seed=seed)
                     seed_cur = seed
-
+                # if proposal in conjectures + proven_conjectures:
+                #     print ("Duplicate entry: " + proposal)
+                # if not proposal:
+                #     print ("Failed")
                 if proposal and proposal not in conjectures + proven_conjectures:
                     # Contract conjectures to make them Peano-parseable.
-                    contracted_proposal = d.contract(proposal)
+                    contracted_proposal = permanent_deriv.contract(proposal)
                     #print("contracted: " + str(contracted_proposal))
                     if contracted_proposal not in conjectures + proven_conjectures:
                         comp_to_raw_dict[str(contracted_proposal)] = proposal
@@ -257,6 +307,8 @@ async def teacher_loop(cfg: DictConfig):
 
                         conjectures.append(contracted_proposal)
                         progress_bar.update(1)
+                    # else:
+                    #     print("Duplicate entry (2): " + contracted_proposal)
                 
 
             progress_bar.close()
@@ -279,45 +331,7 @@ async def teacher_loop(cfg: DictConfig):
             examples = []
             if cfg.use_multiprocessing:
                 # Send the instructions
-                for conjecture in conjectures:
-                    instruction_queue.put((PROOF, conjecture))
-                for j in range(cfg.num_processes):
-                    instruction_queue.put((STOP, ""))
-                
-                # Process results
-                num_dead = 0
-                progress_bar = tqdm(total=len(conjectures))
-                while len(student_results) < len(conjectures) and num_dead < cfg.num_processes:
-                    res_type, res, _ = output_queue.get()
-                    if res_type == CONJECTURE:
-                        # Leftover from conjecturing. We could use them, but for now I'll just throw them out
-                        continue
-                    if res_type == STOP:
-                        num_dead += 1
-                        print(f"Process {res} is done")
-                        continue
-                    assert res_type == PROOF
-                    print(f"Iteration {i}")
-                    print(f"Conjecture: {res.problem}")
-                    if res.error:
-                        print("Proof search errored.")
-                        print(res.error)
-                        continue
-                    if res.success:
-                        assert res.proof
-                        print("Proof search was a success! Proof actions taken:")
-                        print("\t"+"\n\t".join(res.solution_actions))
-                        print(f"logprob: {res.logprob}")
-                    else:
-                        print("Proof search failed")
-                    print(f"Got {len(res.hindsight_examples)} hindsight examples\n")
-                    student_results.append(res)
-                    progress_bar.update(1)
-                progress_bar.close()
-
-                for process in processes:
-                    process.join()
-                    process.close()
+                student_results = batch_prove(cfg, conjectures, theory, premises, instruction_queue, output_queue)
             else:
                 for index, conjecture in enumerate(tqdm(conjectures, miniters=1)):
                     student_results.append(worker.try_prove(agent, background_theory, conjecture, True))
@@ -370,21 +384,6 @@ async def teacher_loop(cfg: DictConfig):
                     'min =', np.min(success_logprobs),
                     'max =', np.max(success_logprobs))
 
-            # Cut the least used theorems
-            useful_theorems = []
-            # useful_theorems = [thm for thm in useful_theorems if not (i - thm.iter_generated >= 3 and thm.freq_used == 0)]
-            # useful_theorems.sort(key=lambda thm: thm.freq_used/(i-thm.iter_generated))
-            # useful_theorems = useful_theorems[len(useful_theorems)//10:]
-            for thm in useful_theorems:
-                if thm.freq_used == 0:
-                    continue
-                thm_arr = list(map(str, thm.theorem.split(" : ")[1:]))
-
-                thm_str = (" : ".join(thm_arr))[:-1]
-                to_add = f'Conj:(useful) ' + d.elaborate(thm_str)
-                if not to_add in examples:
-                    examples.append(to_add)
-
             # 3b- Classify problems into easy/hard.
             for student_result in student_results:
                 # Outcome is the name of the first difficulty bucket that is larger than the logprob.
@@ -393,8 +392,6 @@ async def teacher_loop(cfg: DictConfig):
                                 for i, (k, _) in enumerate(difficulty_buckets)
                                 if (student_result.logprob <= thresholds[i] or
                                     i + 1 == len(difficulty_buckets)))
-                    # if ": nat" in student_result.problem:
-                    #     useful_theorems.append(UsefulConjecture(f"c{conjecture_index:04} : " + student_result.problem + ".", i, 0))
                     conjecture_index += 1
                 else:
                     outcome = FAIL
@@ -405,7 +402,7 @@ async def teacher_loop(cfg: DictConfig):
                     # if ": nat" in student_result.problem: tags.append("useful")
                     # if student_result.problem.count("z") < 3: tags.append("few_zeros")
                     
-                    examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
+                    examples.append(f'Conj:({",".join(tags)}) ' + permanent_deriv.elaborate(student_result.problem))
                 if student_result.success:
                     proven_conjectures.append(student_result.problem)
                     #proven_conjectures.append(student_result.problem_no_seed)
@@ -435,11 +432,52 @@ async def teacher_loop(cfg: DictConfig):
                                 if ": nat" in student_result.problem: tags.append("useful")
                                 if student_result.problem.count("z") < 3: tags.append("few_zeros")
                                 try:
-                                    examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
+                                    examples.append(f'Conj:({",".join(tags)}) ' + permanent_deriv.elaborate(student_result.problem))
                                 except BaseException:
                                     pass
                             examples.extend(h.examples)
                             seen_hindsight_goals.add(h.goal)
+
+            # Now we check for usefulness
+            hard_theorems = [res for res in student_results if res.proof and res.logprob < min(thresholds)]
+            if len(useful_theorems) > 0:
+                theorems_to_check = random.sample(useful_theorems, int(math.sqrt(len(useful_theorems))))
+                new_theory = theory + "\n\n" + "\n\n".join(map(lambda x: x.theorem, theorems_to_check))
+                new_premises = premises + [thm.theorem.split(" : ")[0] for thm in theorems_to_check]
+                hard_problems = [ht.problem for ht in hard_theorems]
+                res = []
+                if cfg.use_multiprocessing:
+                    res = batch_prove(cfg, hard_problems, new_theory, new_premises, instruction_queue, output_queue)
+                else:
+                    bk = worker.BackgroundTheory(new_theory, new_premises)
+                    for hard_theorem in hard_theorems:
+                        res.append(worker.try_prove(agent, bk, hard_theorem.problem))
+                for proof_res, hard_theorem in zip(res, hard_theorems):
+                    if proof_res.proof:
+                        for thm in theorems_to_check:
+                            if proof_res.logprob > hard_theorem.logprob:
+                                # TODO: Current idea doesn't work, since model isn't trained on this conjecture. Most likely, I should include known axioms into prompt
+                                # Alternative: have a theorem as a hypothesis, but this means I need to improve how the model handles intros and also make it faster.
+                                improvement = proof_res.logprob - hard_theorem.logprob
+                                thm.tot_improvement += improvement
+                            thm.freq_used += 1
+            useful_theorems = [thm for thm in useful_theorems if not (i - thm.iter_generated >= 3 and thm.tot_improvement <= 1e-7)]
+            useful_theorems.sort(key=lambda thm: thm.freq_used/(i-thm.iter_generated))
+            useful_theorems = useful_theorems[len(useful_theorems)//10:]
+            
+            for thm in useful_theorems:
+                if thm.tot_improvement <= 1e-7:
+                    continue
+                thm_arr = list(map(str, thm.theorem.split(" : ")[1:]))
+
+                thm_str = (" : ".join(thm_arr))[:-1]
+                to_add = f'Conj:(useful) ' + permanent_deriv.elaborate(thm_str)
+                if not to_add in examples:
+                    examples.append(to_add)
+            
+            for student_result in student_results:
+                if student_result.success and ": nat" in student_result.problem:
+                    useful_theorems.append(UsefulConjecture(f"c{conjecture_index:04} : " + student_result.problem + ".", i, 0, 0.0))
 
             log.write(json.dumps({'iteration': i,
                                 'msg': f'Training on {len(examples)} examples.'}))
@@ -464,6 +502,13 @@ async def teacher_loop(cfg: DictConfig):
                                     'msg': f'Training on {len(examples)} examples.'}))
             
             torch.save(student_results, f'results_{i}.json')
+    for process in processes:
+        instruction_queue.put((STOP, "", None))
+    for process in processes:
+        process.join()
+        process.close()
+        
+
 
 
 @hydra.main(version_base="1.2", config_path="config", config_name="bootstrap")
