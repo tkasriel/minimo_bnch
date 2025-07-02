@@ -30,13 +30,17 @@ from conjecture import AgentLM, Context, UsefulConjecture, sample_conjecture
 from proofsearch import ProofSearchAgent, make_agent
 from convert_to_lean import convert_arith
 import re
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 def now() -> str:
     return '[' + datetime.datetime.now().isoformat() + ']'
 
 
 FAIL = "fail"
-CONJECTURE_PROMPT= 'Conj:(hard,useful,few_zeros) '
+CONJECTURE_PROMPT= 'Conj:(hard,useful) '
 STOP = "STOP"
 CONJECTURE = "CONJECTURE"
 PROOF = "PROOF"
@@ -106,26 +110,27 @@ async def teacher_loop(cfg: DictConfig):
         while os.path.exists(f'{i}.pt'):
             i += 1
         i -= 1
-        if os.path.exists(f"{i}.5.pt"):
-            agent = torch.load(f'{i}.5.pt')
-            start_iteration = i + 1
-            with open(f"examples_{i}.json") as f:
-                examples = json.load(f)
-                agent.train(examples)
-        else:
-            start_iteration = i
-            agent = torch.load(f'{i}.pt', map_location=None if torch.cuda.is_available() else "cpu", weights_only=False)
-            print('Loaded agent from', f'{i}.pt')
-        # Load examples and outcomes.
-        if i > 0:
-            with open(f'outcomes_{i-1}.json', 'r') as f:
-                outcomes = json.load(f)
-                proven_conjectures = [o['problem'] for o in outcomes
-                                      if o['proof'] is not None]
-                comp_to_raw_dict = {o['problem']: o['problem_raw'] for o in outcomes if "problem_raw" in o.keys()}
-            with open(f"generated_theorems_{i-1}.json") as f:
-                thms = json.load(f)
-                useful_theorems = [UsefulConjecture(**thm) for thm in thms]
+        if i >= 0:
+            if os.path.exists(f"{i}.5.pt"):
+                agent = torch.load(f'{i}.5.pt')
+                start_iteration = i + 1
+                with open(f"examples_{i}.json") as f:
+                    examples = json.load(f)
+                    agent.train(examples)
+            else:
+                start_iteration = i
+                agent = torch.load(f'{i}.pt', map_location=None if torch.cuda.is_available() else "cpu", weights_only=False)
+                print('Loaded agent from', f'{i}.pt')
+            # Load examples and outcomes.
+            if i > 0:
+                with open(f'outcomes_{i-1}.json', 'r') as f:
+                    outcomes = json.load(f)
+                    proven_conjectures = [o['problem'] for o in outcomes
+                                        if o['proof'] is not None]
+                    comp_to_raw_dict = {o['problem']: o['problem_raw'] for o in outcomes if "problem_raw" in o.keys()}
+                with open(f"generated_theorems_{i-1}.json") as f:
+                    thms = json.load(f)
+                    useful_theorems = [UsefulConjecture(**thm) for thm in thms]
 
         print('Loaded', len(proven_conjectures), 'proven conjectures from previous run.')
 
@@ -135,7 +140,7 @@ async def teacher_loop(cfg: DictConfig):
             d = permanent_deriv.clone()
             context = Context(d, None, [])
             if i > 0:
-                d.incorporate("\n\n".join(map(lambda x: x.theorem, useful_theorems)))
+                d.incorporate("\n\n".join(map(lambda a: f"c{a[0]} : {a[1].theorem} .", enumerate(useful_theorems))))
             start_time = time.time()
             torch.save(agent, f'{i}.pt')
             print(f"current it: {i}")
@@ -297,27 +302,35 @@ async def teacher_loop(cfg: DictConfig):
                     'max =', np.max(success_logprobs))
 
                 # Cut the least used theorems
-                # useful_theorems = [thm for thm in useful_theorems if not (i - thm.iter_generated >= 3 and thm.freq_used == 0)]
-                # useful_theorems.sort(key=lambda thm: thm.freq_used/(i-thm.iter_generated))
-                # useful_theorems = useful_theorems[len(useful_theorems)//10:]
-                # for thm in useful_theorems:
-                #     if thm.freq_used == 0:
-                #         continue
-                #     thm_arr = list(map(str, thm.theorem.split(" : ")[1:]))
-
-                #     thm_str = (" : ".join(thm_arr))[:-1]
-                #     to_add = f'Conj:(useful) ' + d.elaborate(thm_str)
-                #     if not to_add in examples:
-                #         examples.append(to_add)
+                useful_theorems = [thm for thm in useful_theorems if not (i - thm.iter_generated >= 3 and thm.tot_improvement <= 1e-7)]
+                useful_theorems.sort(key=lambda thm: thm.tot_improvement/(i-thm.iter_generated))
+                useful_theorems = useful_theorems[len(useful_theorems)//10:]
+                for thm in useful_theorems:
+                    if thm.tot_improvement <= 1e-7:
+                        continue
+                    thm_arr = list(map(str, thm.theorem.split(" : ")[1:]))
+                    thm_str = (" : ".join(thm_arr))[:-1]
+                    to_add = f'Conj:(hard,useful) ' + d.elaborate(thm_str)
+                    if to_add not in examples:
+                        examples.append(to_add)
+                    
             # Calculate usefulness
-            hard_problems = [s for s in student_results if s["logprob"] <= thresholds[-1]]
-            results_to_test = []
-            for hard_problem in hard_problems:
-                potential_theorems = random.sample(proven_conjectures, math.floor(math.sqrt(len(proven_conjectures))))
-
-
-
-
+            if len(useful_theorems) == 0:
+                hard_problems = {s["problem"]: float(s["logprob"]) for s in student_results if float(s["logprob"]) <= thresholds[-1]}
+                pairs_tested: list[tuple[UsefulConjecture, str]] = []
+                for hard_problem in hard_problems.keys():
+                    potential_theorems = random.sample(useful_theorems, math.floor(math.sqrt(len(useful_theorems))))
+                    pairs_tested.extend([(pt, hard_problem) for pt in potential_theorems])
+                results_to_test = [a.theorem + " -> " + b for a,b in potential_theorems]
+                results = dsprover.prove(results_to_test)
+                for z in zip(pairs_tested, results):
+                    pair = z[0]
+                    res = z[1]
+                    org_logprob = hard_problem[pair[1]]
+                    pair[0].freq_used += 1
+                    if logprob > org_logprob:
+                        pair[0].tot_improvement += logprob - org_logprob
+            
             # 3b- Classify problems into easy/hard.
             for student_result in student_results:
                 # Outcome is the name of the first difficulty bucket that is larger than the logprob.
@@ -325,47 +338,15 @@ async def teacher_loop(cfg: DictConfig):
                             for i, (k, _) in enumerate(difficulty_buckets)
                             if (student_result["logprob"] <= thresholds[i] or
                                 i + 1 == len(difficulty_buckets)))
-                # if ": nat" in student_result.problem:
-                #     useful_theorems.append(UsefulConjecture(f"c{conjecture_index:04} : " + student_result.problem + ".", i, 0))
+                if ": nat" in student_result["problem"]:
+                    useful_theorems.append(UsefulConjecture(student_result["problem"], i, 0, 0.0))
                 # conjecture_index += 1
                 if not cfg.get('freeze_conjecturer', False):
                     tags = [outcome]
-                    # if ": nat" in student_result.problem: tags.append("useful")
                     # if student_result.problem.count("z") < 3: tags.append("few_zeros")
                     examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result["problem"]))
                 proven_conjectures.append(student_result["problem"])
-                #proven_conjectures.append(student_result.problem_no_seed)
                 proofs.append(student_result["proof"])
-
-                # examples.extend(student_result.extracted_examples)
-
-                # long_ex = []
-                # if os.path.exists("long_examples.json"):
-                #     with open("long_examples.json", "r") as f:
-                #         long_ex = json.load(f)
-                # if cfg.train_policy_on_hindsight_examples:
-                #     for h in student_result.hindsight_examples:
-                #         if h.goal not in seen_hindsight_goals:
-                #             if len(h.proof) > 4:
-                #                 long_ex.append({
-                #                     "goal": str(h.goal),
-                #                     "proof": h.proof,
-                #                     "length": str(len(h.proof))
-                #                 })
-                #             outcome = next(k
-                #                         for i, (k, _) in enumerate(difficulty_buckets)
-                #                         if h.logprob <= thresholds[i] or i + 1 == len(difficulty_buckets))
-
-                #             if not cfg.get('freeze_conjecturer', False):
-                #                 tags = [outcome]
-                #                 if ": nat" in student_result.problem: tags.append("useful")
-                #                 if student_result.problem.count("z") < 3: tags.append("few_zeros")
-                #                 try:
-                #                     examples.append(f'Conj:({",".join(tags)}) ' + d.elaborate(student_result.problem))
-                #                 except BaseException:
-                #                     pass
-                #             examples.extend(h.examples)
-                #             seen_hindsight_goals.add(h.goal)
 
             log.write(json.dumps({'iteration': i,
                                 'msg': f'Training on {len(examples)} examples.'}))
@@ -382,6 +363,7 @@ async def teacher_loop(cfg: DictConfig):
                 tm.write(f"Training took {train_end_time-end_search_time}s\n")
                 tm.write(f"Total time taken: {train_end_time-start_time}s\n")
 
+            save_json([thm.to_dict() for thm in useful_theorems], f"generated_theorems_{i}.json")
             save_json(examples, f'examples_{i}.json')
             save_json(outcomes, f'outcomes_{i}.json')
             print(len(examples), 'accumulated training examples.')

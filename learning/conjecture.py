@@ -26,17 +26,20 @@ class UsefulConjecture:
     theorem: str
     iter_generated: int
     freq_used: int
+    tot_improvement: float
 
-    def __init__(self, theorem: str, iter_generated: str | int, freq_used: str | int):
+    def __init__(self, theorem: str, iter_generated: str | int, freq_used: str | int, tot_improvement: float):
         self.theorem = theorem
         self.iter_generated = int(iter_generated)
         self.freq_used = int(freq_used)
+        self.tot_improvement = float(tot_improvement)
     
     def to_dict(self) -> dict[str, str]:
         return {
             "theorem": self.theorem,
             "iter_generated": str(self.iter_generated),
             "freq_used": str(self.freq_used),
+            "tot_improvement": str(self.tot_improvement),
         }
 
 @dataclass
