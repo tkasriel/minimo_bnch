@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 """Implements the conjecture-prove bootstrapping learning loop."""
+from dotenv import load_dotenv
+load_dotenv()
 
 import asyncio
 import math
@@ -20,6 +22,7 @@ from tqdm import tqdm
 import torch.multiprocessing as mp
 
 import peano
+from convert_to_lean import convert_arith
 from problems import load_natural_number_game_problemset
 import worker
 from worker import StudentResult  # noqa
@@ -136,6 +139,7 @@ async def teacher_loop(cfg: DictConfig):
     seen_hindsight_goals = set()
     proofs = []
     outcomes = []
+    usefulness_outcomes = []
     useful_theorems: list[UsefulConjecture] = []
 
     continue_dir = cfg.get('continue')
@@ -174,6 +178,8 @@ async def teacher_loop(cfg: DictConfig):
                 with open(f"generated_theorems_{i-1}.json") as f:
                     thms = json.load(f)
                     useful_theorems = [UsefulConjecture(**thm) for thm in thms]
+                with open(f"usefulness_outcomes_{i-1}.json") as f:
+                    usefulness_outcomes = json.load(f)
 
         print('Loaded', len(proven_conjectures), 'proven conjectures from previous run.')
 
@@ -257,7 +263,7 @@ async def teacher_loop(cfg: DictConfig):
 
 
             def get_seed_statement():
-                return None
+                # return None
                 if(np.random.random() > 0.5 and len(proven_conjectures) > 0):
                     # seed_conj = "[('a0: nat) -> ('a1: (= 'a0 z)) -> (= (s 'a0) o)]"
                     seed_conj = np.random.choice(proven_conjectures)
@@ -350,6 +356,7 @@ async def teacher_loop(cfg: DictConfig):
                 outcomes.append({'iteration': i,
                                 'problem': student_result.problem,
                                 'problem_raw': comp_to_raw_dict[str(student_result.problem)],
+                                'problem_translated': convert_arith(student_result.problem, 0, False),
                                 'proof': student_result.proof,
                                 'logprob': student_result.logprob,
                                 'actions': student_result.solution_actions,
@@ -415,28 +422,7 @@ async def teacher_loop(cfg: DictConfig):
                     with open("long_examples.json", "r") as f:
                         long_ex = json.load(f)
                 if cfg.train_policy_on_hindsight_examples:
-                    for h in student_result.hindsight_examples:
-                        if h.goal not in seen_hindsight_goals:
-                            if len(h.proof) > 4:
-                                long_ex.append({
-                                    "goal": str(h.goal),
-                                    "proof": h.proof,
-                                    "length": str(len(h.proof))
-                                })
-                            outcome = next(k
-                                        for i, (k, _) in enumerate(difficulty_buckets)
-                                        if h.logprob <= thresholds[i] or i + 1 == len(difficulty_buckets))
-
-                            if not cfg.get('freeze_conjecturer', False):
-                                tags = [outcome]
-                                if ": nat" in student_result.problem: tags.append("useful")
-                                if student_result.problem.count("z") < 3: tags.append("few_zeros")
-                                try:
-                                    examples.append(f'Conj:({",".join(tags)}) ' + permanent_deriv.elaborate(student_result.problem))
-                                except BaseException:
-                                    pass
-                            examples.extend(h.examples)
-                            seen_hindsight_goals.add(h.goal)
+                    extract_examples(cfg, difficulty_buckets, permanent_deriv, seen_hindsight_goals, examples, student_result, thresholds, long_ex)
 
             # Now we check for usefulness
             hard_theorems = [res for res in student_results if res.proof and res.logprob < min(thresholds)]
@@ -448,12 +434,20 @@ async def teacher_loop(cfg: DictConfig):
                 res = []
                 if cfg.use_multiprocessing:
                     res = batch_prove(cfg, hard_problems, new_theory, new_premises, instruction_queue, output_queue)
+                    
                 else:
                     bk = worker.BackgroundTheory(new_theory, new_premises)
                     for hard_theorem in hard_theorems:
                         res.append(worker.try_prove(agent, bk, hard_theorem.problem))
                 for proof_res, hard_theorem in zip(res, hard_theorems):
                     if proof_res.proof:
+                        usefulness_outcomes.append({
+                            "iteration": i,
+                            "problem": convert_arith(hard_theorem.problem, 0, False),
+                            "proof": proof_res.proof,
+                            "used_theorems": list(map(lambda x: x.theorem, theorems_to_check)),
+                            "improvement": proof_res.logprob - hard_theorem.logprob
+                        })
                         for thm in theorems_to_check:
                             if proof_res.logprob > hard_theorem.logprob:
                                 # TODO: Current idea doesn't work, since model isn't trained on this conjecture. Most likely, I should include known axioms into prompt
@@ -461,6 +455,8 @@ async def teacher_loop(cfg: DictConfig):
                                 improvement = proof_res.logprob - hard_theorem.logprob
                                 thm.tot_improvement += improvement
                             thm.freq_used += 1
+                    # Train the model to use the old theorems.
+                    extract_examples(cfg, difficulty_buckets, permanent_deriv, seen_hindsight_goals, examples, proof_res, thresholds, long_ex)
             useful_theorems = [thm for thm in useful_theorems if not (i - thm.iter_generated >= 3 and thm.tot_improvement <= 1e-7)]
             useful_theorems.sort(key=lambda thm: thm.freq_used/(i-thm.iter_generated))
             useful_theorems = useful_theorems[len(useful_theorems)//10:]
@@ -489,7 +485,7 @@ async def teacher_loop(cfg: DictConfig):
             train_end_time = time.time()
             with open("time_metric.txt", "a+") as tm:
                 tm.write(f"Iteration {i}: \n")
-                tm.write(f"Proof search took {end_conjecture_time-start_time}s\n")
+                tm.write(f"Conjecturing took {end_conjecture_time-start_time}s\n")
                 tm.write(f"Proof search took {end_search_time-end_conjecture_time}s\n")
                 tm.write(f"Training took {train_end_time-end_search_time}s\n")
                 tm.write(f"Total time taken: {train_end_time-start_time}s\n")
@@ -497,6 +493,7 @@ async def teacher_loop(cfg: DictConfig):
             save_json([thm.to_dict() for thm in useful_theorems], f"generated_theorems_{i}.json")
             save_json(examples, f'examples_{i}.json')
             save_json(outcomes, f'outcomes_{i}.json')
+            save_json(usefulness_outcomes, f'usefulness_outcomes_{i}.json')
             print(len(examples), 'accumulated training examples.')
             log.write(json.dumps({'iteration': i,
                                     'msg': f'Training on {len(examples)} examples.'}))
@@ -507,6 +504,28 @@ async def teacher_loop(cfg: DictConfig):
     for process in processes:
         process.join()
         process.close()
+
+def extract_examples(cfg, difficulty_buckets, permanent_deriv, seen_hindsight_goals, examples, student_result, thresholds, long_ex):
+    for h in student_result.hindsight_examples:
+        if h.goal not in seen_hindsight_goals:
+            if len(h.proof) > 4:
+                long_ex.append({
+                                    "goal": str(h.goal),
+                                    "proof": h.proof,
+                                    "length": str(len(h.proof))
+                                })
+            outcome = next(k
+                                        for i, (k, _) in enumerate(difficulty_buckets)
+                                        if h.logprob <= thresholds[i] or i + 1 == len(difficulty_buckets))
+
+            if not cfg.get('freeze_conjecturer', False):
+                tags = [outcome]
+                try:
+                    examples.append(f'Conj:({",".join(tags)}) ' + permanent_deriv.elaborate(student_result.problem))
+                except BaseException:
+                    pass
+            seen_hindsight_goals.add(h.goal)
+            examples.extend(h.examples)
         
 
 

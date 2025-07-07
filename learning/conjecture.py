@@ -26,7 +26,7 @@ class UsefulConjecture:
     theorem: str
     iter_generated: int
     freq_used: int
-    tot_improvement: int
+    tot_improvement: float
 
     def __init__(self, theorem: str, iter_generated: str | int, freq_used: str | int, tot_improvement: str | float):
         self.theorem = theorem

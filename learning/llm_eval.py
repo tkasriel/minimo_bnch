@@ -1,15 +1,22 @@
+import asyncio
 import json
 import os
 import random
-from openai import OpenAI
+import re
+import time
+from typing import Awaitable
+from openai import AsyncOpenAI
 import dotenv
+import tqdm
+from tqdm.asyncio import tqdm_asyncio
 
 from convert_to_lean import convert_arith
 
 if not dotenv.load_dotenv():
     raise ValueError("Need to set api key in .env")
 print (f"OPENAI API KEY: {os.getenv('OPENAI_API_KEY')}")
-model = OpenAI()
+client = AsyncOpenAI()
+MODEL = "gpt-4.1"
 
 def _extract_theorems_from_outcomes(outcomes_filepath: str, logprobs: bool = False) -> list[str] | list[tuple]:
     with open(outcomes_filepath) as f:
@@ -63,6 +70,90 @@ On the last line, say either USEFUL or NOT USEFUL and nothing else.
     ] for theorem in theorems]
     return chats
 
+
+async def _remove_dedup (useful_theorems: list[tuple[str, str]]) -> list[tuple[str,str]]:
+    prompt = """I have a set of lean theorems, some of which are very similar to each other.
+Please remove the duplicates, so that I can have a list of only unique theorems.
+For example, the following three theorems would be duplicates of each other:
+```lean4
+theorem problem1 : (v0 : Nat) -> v0 * 1 = v0
+theorem problem2 : (v0 : Nat) -> (v1 : Nat) -> v1 * 1 = v1
+theorem problem3 : (v0 : Nat) -> (v1 : Nat) -> (v2 : v0 = v1) -> v1 * 1 = v1
+```
+The inclusion of an extra variable in problem 2 doesn't change the fact that the result is exactly the same, and the different names for the variable doesn't affect the result.
+Problem 3 introduces an irrelevant hypothesis, which doesn't get used in the theorem, and the conclusion is still the same.
+Here is my list of theorems for you to remove duplicates for.
+```lean4
+{}
+```
+Think it through step by step, and then return the list of unique theorems in the same format I gave them. Make sure your answer is inside the very last lean codeblock
+"""
+    chat = [
+        {"role": "developer", "content": "You are an expert at evaluating lean theorems"},
+        {"role": "user", "content": prompt.format("\n".join([u[0] for u in useful_theorems]))}
+    ]
+    completion = await client.chat.completions.create(
+        model=MODEL,
+        messages=chat
+    )
+    res = completion.choices[0].message.content
+    print(res)
+    assert res
+    res_theorems = re.findall(r'```lean(?s).*```', res)[-1]
+    outs: list[tuple[str,str]] = []
+    for res_thm in res_theorems.split('\n'):
+        if '```' in res_thm:
+            continue
+        for ut in useful_theorems:
+            if res_thm == ut[0]:
+                outs.append(ut)
+    return outs
+
+
+async def run_evaluation (outcomes_filepath: str, output_folder_path: str) -> None:
+    os.makedirs(output_folder_path, exist_ok = True)
+    if not os.path.exists(outcomes_filepath):
+        raise FileNotFoundError(f"Cannot find outcomes file")
+    theorem_list: list[str] = _extract_theorems_from_outcomes(outcomes_filepath)
+    prompt_list = _make_prompts(theorem_list)
+    promises: list[Awaitable] = []
+
+    print(f"Sending {len(prompt_list)} requests in 5s")
+    time.sleep(5)
+    print("Sending")
+    for prompt in prompt_list:
+        completion = client.chat.completions.create(
+            model= MODEL,
+            messages=prompt
+        )
+        promises.append(completion)
+    print("All requests sent")
+
+    useful_theorems: list[tuple[str,str]] = []
+    results = []
+    batch_size = 100
+    for batch_i in tqdm.tqdm(range(0, len(promises), batch_size)):
+        results.extend(await tqdm_asyncio.gather(*(promises[batch_i:min(batch_i+batch_size, len(promises))])))
+    # results: list = await tqdm_asyncio.gather(*promises)
+    for theorem, completion in zip(theorem_list, results):
+        response: str = completion.choices[0].message.content
+        if "NOT" not in response.split("\n")[-1]:
+            useful_theorems.append((theorem, response))
+    
+    
+    with open(os.path.join(output_folder_path, "useful_theorems.txt"), "w") as f:
+        for tup in useful_theorems:
+            f.write(tup[0] + "\n" + tup[1] + "\n ============ \n\n")
+    
+    
+    useful_theorems = await _remove_dedup(useful_theorems)
+    with open(os.path.join(output_folder_path, "useful_theorem_dedup.txt"), "w") as f:
+        for tup in useful_theorems:
+            f.write(tup[0] + "\n" + tup[1] + "\n ============ \n\n")
+    print ("RESULTS:")
+    print (f"Useful theorems: {len(useful_theorems)}/{len(results)}")
+
+    
 def send_batch_evaluation (outcomes_filepath: str, output_folder_path: str, name: str = "Minimo evaluation") -> None:
     if not os.path.exists(output_folder_path):
         raise FileNotFoundError(f"{os.path.join(__path__, output_folder_path)}")
@@ -206,12 +297,14 @@ def look_at_graph (input_filepath: str) -> None:
 
 
 
-OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/llm_eval"
+OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/llm_eval_new_usefulness"
 
+
+asyncio.run(run_evaluation("/home/timothekasriel/minimo/learning/outputs/new_usefulness/outcomes_9.json", OUTPUT_FOLDER))
 # send_batch_evaluation("/Users/tkasriel/code/rsh/minimo/learning/outputs/orig_minimo/outcomes_arith.json", OUTPUT_FOLDER, "Original Minimo Arithmetic Evaluation")
 # list_batch_evaluations(OUTPUT_FOLDER)
 # cancel_batch("batch_68523b4c6ea081908042e6131d7bea8e")
 # get_batch_evaluations("batch_68523c3f921c8190a46b4f7f0d508d37", OUTPUT_FOLDER)
-make_graph("/home/timothekasriel/minimo/learning/outputs/2025-06-05/11-55-28/outcomes_16.json", OUTPUT_FOLDER)
+# make_graph("/home/timothekasriel/minimo/learning/outputs/2025-06-05/11-55-28/outcomes_16.json", OUTPUT_FOLDER)
 # draw_graph("/home/timothekasriel/minimo/learning/outputs/llm_eval/graph.csv", OUTPUT_FOLDER)
 # look_at_graph("/home/timothekasriel/minimo/learning/outputs/llm_eval/graph.csv")
