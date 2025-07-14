@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 
 """Implements the conjecture-prove bootstrapping learning loop."""
-from dotenv import load_dotenv
-load_dotenv()
+
 
 import asyncio
 import math
@@ -44,6 +43,8 @@ PROOF = "PROOF"
 
 def process_main(id: int, agent: ProofSearchAgent, instruction_queue: mp.Queue, output_queue: mp.Queue):
     instruction: tuple[str,str] = ("","")
+    from dotenv import load_dotenv
+    load_dotenv()
     
     # Unfortunately PyDerivation is not pickle-able and I don't know enough rust to fix that
     current_theory = ""
@@ -113,6 +114,9 @@ def batch_prove (cfg, conjectures: list[str], theory: str, premises: list[str], 
 
 
 async def teacher_loop(cfg: DictConfig):
+    # from dotenv import load_dotenv
+    # load_dotenv()
+    # os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     if cfg.use_multiprocessing:
         mp.set_start_method(cfg.mp_start_method)
 
