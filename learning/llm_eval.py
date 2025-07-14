@@ -297,10 +297,10 @@ def look_at_graph (input_filepath: str) -> None:
 
 
 
-OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/llm_eval_new_usefulness"
+OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/dsprover_usefulness"
 
 
-asyncio.run(run_evaluation("/home/timothekasriel/minimo/learning/outputs/new_usefulness/outcomes_9.json", OUTPUT_FOLDER))
+asyncio.run(run_evaluation(os.path.join(OUTPUT_FOLDER, "outcomes_4.json"), OUTPUT_FOLDER))
 # send_batch_evaluation("/Users/tkasriel/code/rsh/minimo/learning/outputs/orig_minimo/outcomes_arith.json", OUTPUT_FOLDER, "Original Minimo Arithmetic Evaluation")
 # list_batch_evaluations(OUTPUT_FOLDER)
 # cancel_batch("batch_68523b4c6ea081908042e6131d7bea8e")

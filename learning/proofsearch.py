@@ -447,6 +447,8 @@ class TreeSearchNode:
         # before = time.time()
         actions = [a for a in self.state_node.actions
                    if len(str(a).split(' : ')[0].lstrip('=> ')) <= MAX_ACTION_LENGTH]
+        # if len(actions) > 5:
+        #     actions = random.sample(actions, 5)
         self._children = [TreeSearchNode(self._state.expand(a),
                                          parent=(self, a))
                           for a in actions]
@@ -525,6 +527,7 @@ class TreeSearchNode:
                 breakpoint()
 
             head_logprob = math.log(float(pi[idx]))
+            # print(a, head_logprob)
             tail_logprob = (TreeSearchNode(self.state_node.expand(a),
                                            parent=(self, a))
                             ._actions_logprob_under_policy(tail, policy))
@@ -699,6 +702,11 @@ class LMPolicy(Policy):
                     str(node.state_node),
                     actions,
                     children_states)
+        for i, a in enumerate(actions):
+            if " c" in a:
+                policy_estimates[i] *= 2
+                value_estimates[i] *= 2
+                # print(a)
 
         if node.is_conjunctive():
             policy_estimates = [1 for _ in actions]
