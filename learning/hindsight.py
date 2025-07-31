@@ -22,7 +22,7 @@ class HindsightExample:
     examples: list[str]
 
 
-def extract_hindsight_examples(root,
+def extract_hindsight_examples(cfg,root,
                                theory: str,
                                premises: list[str],
                                pi: proofsearch.Policy,
@@ -76,7 +76,7 @@ def extract_hindsight_examples(root,
             # one iteration, since we're using the optimal policy. It only takes
             # more iterations because MCTS will force some exploration.
             for _ in range(10):
-                success, _, _, _ = mcts.evaluate(mcts_root, verbose=False)
+                success, _, _, _ = mcts.evaluate(cfg, mcts_root, verbose=False)
                 if success:
                     break
 
@@ -90,7 +90,7 @@ def extract_hindsight_examples(root,
                 statement=states_on_path[0][0].goal(),
                 proof=mcts_root.reconstruct_proof(),
                 solution_actions=list(map(str, mcts_root.get_solution_actions())),
-                logprob=mcts_root.solution_logprob_under_policy(pi),
+                logprob=mcts_root.solution_logprob_under_policy(cfg, pi),
                 examples=examples,
             ))
 
@@ -159,7 +159,7 @@ class PathFollowingPolicy(proofsearch.Policy):
     def __init__(self, pi: dict[str, str]):
         self._pi = pi
 
-    def evaluate(self, node):
+    def evaluate(self, cfg, node):
         return ([int(str(c.state_node) in self._pi) for c in node._children],
                 1000*int(str(node.state_node) in self._pi))
 

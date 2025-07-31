@@ -45,38 +45,34 @@ app.conf.worker_max_memory_per_child = 1e9
 app.conf.accept_content = ['application/json', 'application/x-python-serialize']
 
 
-def try_prove(agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, statement: str, verbose: bool = False) -> StudentResult:
+def try_prove(cfg, agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, statement: str, verbose: bool = False) -> StudentResult:
     # print(f"worker, curr allocated (init): {torch.cuda.memory_allocated()}")
 
     # print('Proving', statement[0], 'on', agent._policy._lm._lm.device)
-    curr_time = time.time()
     state = peano.PyProofState(theory.theory,
                                theory.premises,
                                statement)
 
     #print(f"Instantiating peano state took {time.time()-curr_time:02.1f}s")
-    curr_time = time.time()
 
     try:
-        agent_result = agent.proof_search(statement, state, verbose)
-        print(f"Proof search took {time.time()-curr_time:02.1f}s")
-        curr_time = time.time()
+        agent_result = agent.proof_search(cfg, statement, state, verbose)
 
         if agent_result.success:
             proof = agent_result.root.state_node.reconstruct_proof(
                 agent_result.root.get_solution_actions())
             solution_actions = agent_result.root.get_solution_actions()
-            logprob = agent_result.root.solution_logprob_under_policy(agent._policy, solution_actions)
+            logprob = agent_result.root.solution_logprob_under_policy(cfg, agent._policy, solution_actions)
         else:
             solution_actions, proof, logprob = None, None, None
         #print(f"Getting results took {time.time()-curr_time:02.1f}s")
 
-        curr_time = time.time()
         examples = []
         # Policy examples for the proved goal.
         examples.extend(agent._policy.extract_examples(root=agent_result.root))
         # Hindsight examples (policy + conjecturing).
         hindsight_examples = hindsight.extract_hindsight_examples(
+                cfg,
                 agent_result.root,
                 theory.theory,
                 theory.premises,
@@ -104,6 +100,6 @@ def try_prove(agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, sta
             raise KeyboardInterrupt()
         tb = traceback.format_exception(e)
         print('Error in try_prove!')
-        print(tb)
-        return StudentResult(tb, False, statement, None, None, [],
+        print("".join(tb))
+        return StudentResult("\n".join(tb), False, statement, None, None, [],
                              None, None, None)

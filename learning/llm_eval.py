@@ -57,7 +57,7 @@ o_s : Nat.succ 0 = 1.
 nat_ind : (p : (Nat -> Prop)) -> (p z) -> ((n : Nat) -> (p n) -> p (Nat.succ n)) -> (n : Nat) -> (p n).
 ```
 As well as access to the `rfl` and `rewrite` commands
-Here is the theorem you are to evaluate:
+Here is the theorem you are to evaluate
 ```lean4
 {}
 ```
@@ -71,27 +71,30 @@ On the last line, say either USEFUL or NOT USEFUL and nothing else.
     return chats
 
 
-async def _remove_dedup (useful_theorems: list[tuple[str, str]]) -> list[tuple[str,str]]:
-    prompt = """I have a set of lean theorems, some of which are very similar to each other.
+async def _remove_dedup (useful_theorems: list[tuple[str, str]]) -> tuple[list[tuple[str,str]], tuple[str, str]]:
+    prompt = """I have a set of lean theorems, some of which are very similar to each other. I want to use them as tactics for proof generation. 
 Please remove the duplicates, so that I can have a list of only unique theorems.
-For example, the following three theorems would be duplicates of each other:
+For example, the following four theorems would be duplicates of each other:
 ```lean4
 theorem problem1 : (v0 : Nat) -> v0 * 1 = v0
 theorem problem2 : (v0 : Nat) -> (v1 : Nat) -> v1 * 1 = v1
 theorem problem3 : (v0 : Nat) -> (v1 : Nat) -> (v2 : v0 = v1) -> v1 * 1 = v1
+theorem problem4 : (v0 : Nat) -> v0 * (Nat.succ 0) = v0
 ```
 The inclusion of an extra variable in problem 2 doesn't change the fact that the result is exactly the same, and the different names for the variable doesn't affect the result.
 Problem 3 introduces an irrelevant hypothesis, which doesn't get used in the theorem, and the conclusion is still the same.
-Here is my list of theorems for you to remove duplicates for.
-```lean4
+The last one is a trivial result of the others, as 1 is defined as Nat.succ 0 in this case.
+Here is my list of theorems for you to remove duplicates for. 
 {}
-```
-Think it through step by step, and then return the list of unique theorems in the same format I gave them. Make sure your answer is inside the very last lean codeblock
+I also have attached an explanation for why each could be useful for a theorem prover.
+{}
+Think it through step by step, and then return the list of unique theorems from this list in a list format inside of a ```lean4``` code block. Make sure your answer is inside the very last lean codeblock
 """
     chat = [
         {"role": "developer", "content": "You are an expert at evaluating lean theorems"},
-        {"role": "user", "content": prompt.format("\n".join([u[0] for u in useful_theorems]))}
+        {"role": "user", "content": prompt.format('\n'.join([u[0] for u in useful_theorems]), "\n\n".join(['\n'.join(u) for u in useful_theorems]))}
     ]
+    # print(chat[1]["content"][:8000])
     completion = await client.chat.completions.create(
         model=MODEL,
         messages=chat
@@ -99,7 +102,7 @@ Think it through step by step, and then return the list of unique theorems in th
     res = completion.choices[0].message.content
     print(res)
     assert res
-    res_theorems = re.findall(r'```lean(?s).*```', res)[-1]
+    res_theorems: str = re.findall(r'(?s)```lean.*```', res)[-1]
     outs: list[tuple[str,str]] = []
     for res_thm in res_theorems.split('\n'):
         if '```' in res_thm:
@@ -107,7 +110,7 @@ Think it through step by step, and then return the list of unique theorems in th
         for ut in useful_theorems:
             if res_thm == ut[0]:
                 outs.append(ut)
-    return outs
+    return outs, (res_theorems, res)
 
 
 async def run_evaluation (outcomes_filepath: str, output_folder_path: str) -> None:
@@ -146,14 +149,27 @@ async def run_evaluation (outcomes_filepath: str, output_folder_path: str) -> No
             f.write(tup[0] + "\n" + tup[1] + "\n ============ \n\n")
     
     
-    useful_theorems = await _remove_dedup(useful_theorems)
+    useful_theorems = (await _remove_dedup(useful_theorems))[0]
     with open(os.path.join(output_folder_path, "useful_theorem_dedup.txt"), "w") as f:
         for tup in useful_theorems:
             f.write(tup[0] + "\n" + tup[1] + "\n ============ \n\n")
     print ("RESULTS:")
     print (f"Useful theorems: {len(useful_theorems)}/{len(results)}")
 
+async def remove_dedup_fix (output_folder_path: str) -> None:
+    with open (os.path.join(output_folder_path, "useful_theorems.txt")) as f:
+        lines = ("\n".join(f.readlines())).split("============")
+    useful_theorems = []
+    for l in lines[1:]:
+        l = '\n'.join([line for line in l.split('\n') if line.strip()])
+        useful_theorems.append((l.split('\n')[0], '\n'.join(l.split('\n')[1:])))
+    results = await _remove_dedup(useful_theorems)
+    with open (os.path.join(output_folder_path, "useful_theorems_dedup_fix.txt"), "w") as f:
+        f.write(results[1][0] + "\n\n" + results[1][1])
+
     
+
+
 def send_batch_evaluation (outcomes_filepath: str, output_folder_path: str, name: str = "Minimo evaluation") -> None:
     if not os.path.exists(output_folder_path):
         raise FileNotFoundError(f"{os.path.join(__path__, output_folder_path)}")
@@ -297,14 +313,16 @@ def look_at_graph (input_filepath: str) -> None:
 
 
 
-OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/dsprover_usefulness"
 
-
-asyncio.run(run_evaluation(os.path.join(OUTPUT_FOLDER, "outcomes_4.json"), OUTPUT_FOLDER))
-# send_batch_evaluation("/Users/tkasriel/code/rsh/minimo/learning/outputs/orig_minimo/outcomes_arith.json", OUTPUT_FOLDER, "Original Minimo Arithmetic Evaluation")
-# list_batch_evaluations(OUTPUT_FOLDER)
-# cancel_batch("batch_68523b4c6ea081908042e6131d7bea8e")
-# get_batch_evaluations("batch_68523c3f921c8190a46b4f7f0d508d37", OUTPUT_FOLDER)
-# make_graph("/home/timothekasriel/minimo/learning/outputs/2025-06-05/11-55-28/outcomes_16.json", OUTPUT_FOLDER)
-# draw_graph("/home/timothekasriel/minimo/learning/outputs/llm_eval/graph.csv", OUTPUT_FOLDER)
-# look_at_graph("/home/timothekasriel/minimo/learning/outputs/llm_eval/graph.csv")
+if __name__ == "__main__":
+    OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/line15"
+    print (f"Current evaluation: {os.path.basename(OUTPUT_FOLDER)}")
+    asyncio.run(run_evaluation(os.path.join(OUTPUT_FOLDER, "outcomes_9.json"), OUTPUT_FOLDER))
+    asyncio.run(remove_dedup_fix(OUTPUT_FOLDER))
+    # send_batch_evaluation("/Users/tkasriel/code/rsh/minimo/learning/outputs/orig_minimo/outcomes_arith.json", OUTPUT_FOLDER, "Original Minimo Arithmetic Evaluation")
+    # list_batch_evaluations(OUTPUT_FOLDER)
+    # cancel_batch("batch_68523b4c6ea081908042e6131d7bea8e")
+    # get_batch_evaluations("batch_68523c3f921c8190a46b4f7f0d508d37", OUTPUT_FOLDER)
+    # make_graph("/home/timothekasriel/minimo/learning/outputs/2025-06-05/11-55-28/outcomes_16.json", OUTPUT_FOLDER)
+    # draw_graph("/home/timothekasriel/minimo/learning/outputs/llm_eval/graph.csv", OUTPUT_FOLDER)
+    # look_at_graph("/home/timothekasriel/minimo/learning/outputs/llm_eval/graph.csv")

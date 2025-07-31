@@ -8,8 +8,18 @@ defaults:
 iterations: 10
 n_conjectures: 200
 use_multiprocessing: true
-num_processes: 8
+num_processes: 6
 mp_start_method: spawn
+
+# Experiment flags
+seed: False
+trivial_filtering: False
+train_on_usefulness_testing: False
+support_theorem_use: False
+intro_skip: False
+support_novelty: False
+max_proof_expansion: -1 # -1 for no max
+metric_use_useage: False
 
 difficulty_buckets:
     - hard: 20

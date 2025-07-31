@@ -113,7 +113,7 @@ initial_state = peano.PyProofState(EXAMPLE["theory"],
 root = TreeSearchNode(HolophrasmNode([initial_state]))
 
 mcts = MonteCarloTreeSearch(UniformPolicy({}))
-solved, pi, _, it = mcts.evaluate(root)
+solved, pi, _, it = mcts.evaluate(cfg, root)
 
 # assert solved
 

@@ -22,26 +22,6 @@ from util import batch_inference, ALLOW_PROP_AS_TYPE
 
 ALLOW_PROP_AS_TYPE = False
 
-class UsefulConjecture:
-    theorem: str
-    iter_generated: int
-    freq_used: int
-    tot_improvement: float
-
-    def __init__(self, theorem: str, iter_generated: str | int, freq_used: str | int, tot_improvement: str | float):
-        self.theorem = theorem
-        self.iter_generated = int(iter_generated)
-        self.freq_used = int(freq_used)
-        self.tot_improvement = float(tot_improvement)
-    
-    def to_dict(self) -> dict[str, str]:
-        return {
-            "theorem": self.theorem,
-            "iter_generated": str(self.iter_generated),
-            "freq_used": str(self.freq_used),
-            "tot_improvement": str(self.tot_improvement),
-        }
-
 @dataclass
 class Context:
     derivation: peano.PyDerivation
@@ -390,7 +370,7 @@ def pretty_print_conjecture(conjecture: str) -> str:
 
 MAX_OPEN_PARENS = 8
 
-def sample_conjecture(lm, context, previous_conjectures: list[str], seed = None, max_it=100):
+def sample_conjecture(cfg, lm, context, previous_conjectures: list[str], seed = None, max_it=100):
     generation = ''
 
     def has_trivial_outcome(conjecture):
@@ -441,7 +421,7 @@ def sample_conjecture(lm, context, previous_conjectures: list[str], seed = None,
             #     return generation_no_seed[:-1]
             # if ":" in generation_no_seed and generation_no_seed[0] != "[":
             #     return "[" + generation_no_seed
-            if has_trivial_outcome(generation):
+            if has_trivial_outcome(generation) and cfg.trivial_filtering:
                 #print('TRIVIAL OUTCOME:', generation)
                 # Reject this conjecture and start over
                 generation = seed if seed else ''
@@ -479,11 +459,14 @@ def sample_conjecture(lm, context, previous_conjectures: list[str], seed = None,
             scores = list(map(math.exp, lm.score(choices, mean=False, prefix=generation)))
             
             # Favor novel directions
-            weighted_scores = []
-            for c, s in zip(choices, scores):
-                count = sum([(1 if generation + c == t[:len(generation)+1] else 0) for t in previous_conjectures])
-                weighted_scores.append(s / (count + 1))
-            choice = random.choices(choices, weights=weighted_scores)[0]
+            if cfg.support_novelty:
+                weighted_scores = []
+                for c, s in zip(choices, scores):
+                    count = sum([(1 if generation + c == t[:len(generation)+1] else 0) for t in previous_conjectures])
+                    weighted_scores.append(s / (count + 1))
+                choice = random.choices(choices,weights=weighted_scores)[0]
+            else:
+                choice = random.choices(choices,)[0]
             generation += choice
             # Filter completions to those starting with the chosen character and drop the character.
             completions = [c[1:] for c in completions if c.startswith(choice)]

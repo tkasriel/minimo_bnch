@@ -6,11 +6,14 @@ import random
 import os
 import logging
 import json
+import re
 import signal
 from contextlib import contextmanager
 from functools import wraps
+from typing import Sequence
 
 import altair
+from pydantic import BaseModel
 import torch
 import wandb
 import numpy as np
@@ -323,7 +326,11 @@ def time_limit(seconds):
         signal.alarm(0)
 
 
-def save_json(obj, path):
+def save_json(obj: Sequence[BaseModel] | list[dict], path: str):
+    if len(obj) == 0:
+        return
+    if isinstance(obj[0], BaseModel):
+        obj = [o.model_dump() for o in obj] # type: ignore
     with open(path, 'w') as f:
         json.dump(obj, f)
 
@@ -384,3 +391,73 @@ def verify_action(action) -> bool:
     if len(arrow_sep) > 1:
         return all(verify_action(a) for a in arrow_sep)
     return action_str.count("=") <= 1 or ALLOW_PROP_AS_TYPE
+
+
+def _renumber_var_names(statement: str) -> str:
+    matches = re.findall("'a\\d+", statement)
+    if matches:
+        unique_matches = sorted(list(set(matches)), key = lambda i: int(i[2:]))
+
+        for i in reversed(unique_matches):
+            statement = statement.replace(i, f"[var{i[2:]}]")
+        unique_matches = sorted(list(set(matches)), key = lambda i: int(i[2:]))
+
+        for i, name in enumerate(unique_matches):
+            statement = statement.replace(f"[var{name[2:]}]", f"'a{i}")
+        return statement
+    else:
+        return statement
+
+def simplify_decls(statement: str) -> str:
+    """Given a conjecture, remove all unused variables"""
+    decl_clauses, last_clause = statement.split("->")[:-1], statement.split("->")[-1]
+
+    used_variables = set(re.findall("'a\\d+", last_clause))
+    are_clauses_useful = [False for _ in decl_clauses]
+
+    for _ in range(len(decl_clauses)):
+        for i, clause in enumerate(decl_clauses):
+            clause_vars = re.findall("'a\\d+", clause)
+            if clause_vars:
+                for var in clause_vars:
+                    if(var in used_variables):
+                        are_clauses_useful[i] = True
+                        used_variables.update(clause_vars)
+
+    decl_clauses = [decl_clauses[i].strip() for i in range(len(decl_clauses)) if are_clauses_useful[i]]
+    recombined =  " -> ".join(decl_clauses + [last_clause.strip()])
+
+    if "->" in recombined:
+        recombined = recombined if "[" in recombined else "[" + recombined
+        recombined = recombined if "]" in recombined else recombined + "]"
+    else:
+        recombined = recombined.replace("[", "").replace("]", "").strip()
+    
+    return _renumber_var_names(recombined)
+
+
+def get_seed_statement(cfg, proven_conjectures: list[str], comp_to_raw_dict: dict[str, str]) -> str | None:
+    """Generate with some probability a seed conjecture for conjecturing purposes"""
+    if not cfg.seed:
+        return None
+    if(np.random.random() > 0.5 and len(proven_conjectures) > 0):
+        # seed_conj = "[('a0: nat) -> ('a1: (= 'a0 z)) -> (= (s 'a0) o)]"
+        seed_conj = np.random.choice(proven_conjectures)
+        seed_conj = comp_to_raw_dict[str(seed_conj)]
+        seed_conj = simplify_decls(seed_conj)
+
+        matches = re.findall("'a\\d+", seed_conj)
+        if matches:
+            max_var_count = max(int(i[2:]) for i in matches)
+        else:
+            max_var_count = -1
+
+        decl_clauses, last_clause = seed_conj.split("->")[:-1], seed_conj.split("->")[-1][:-1]
+        last_clause = f" ('a{max_var_count + 1} :{last_clause}) "
+
+        seed = "->".join(decl_clauses + [last_clause])
+        seed = seed if "[" in seed else "[" + seed
+        return seed
+    else:
+        seed = None
+    return seed

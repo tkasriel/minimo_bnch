@@ -101,13 +101,13 @@ class TransformerLMPolicy(nn.Module):
 
         return return_value
 
-    def estimate_state_values(self, states: list[str]) -> np.array:
+    def estimate_state_values(self, states: list) -> np.array:
         return self._estimate_query_values([self.format_state_query(s) for s in states])
 
-    def estimate_state_action_values(self, state: str, actions: list[str]) -> np.array:
+    def estimate_state_action_values(self, state: str, actions: list) -> np.array:
         return self._estimate_query_values([self.format_state_action_query(state, a) for a in actions])
 
-    def estimate_state_and_action_values(self, state: str, actions: list[str], children: list[str]) -> (np.array, np.array):
+    def estimate_state_and_action_values(self, state: str, actions: list, children: list[str]) -> (np.array, np.array):
         st_queries = [self.format_state_query(s) for s in children]
         sa_queries = [self.format_state_action_query(state, a) for a in actions]
         all_queries = st_queries + sa_queries
@@ -142,6 +142,7 @@ class TransformerLMPolicy(nn.Module):
     def format_state_query(self, state, label=''):
         if len(state) > 490:
             state = '[...] ' + state[-490:]
+        
         return f'S: {state}\n???{label}'
 
     def format_provable_goal(self, context, goal):

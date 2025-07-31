@@ -439,7 +439,7 @@ class TreeSearchNode:
     def is_leaf(self):
         return not self.is_terminal() and self._children is None
 
-    def expand(self, only_if_leaf=True):
+    def expand(self, cfg, only_if_leaf=True):
         if only_if_leaf:
             assert self.is_leaf(), 'Can only expand leaves.'
         # NOTE: We can either compute the state for the child here (fast)
@@ -447,8 +447,11 @@ class TreeSearchNode:
         # before = time.time()
         actions = [a for a in self.state_node.actions
                    if len(str(a).split(' : ')[0].lstrip('=> ')) <= MAX_ACTION_LENGTH]
-        # if len(actions) > 5:
-        #     actions = random.sample(actions, 5)
+        
+        if cfg.max_proof_expansion > 0:
+            if sum([1 if " c" in str(a) else 0 for a in actions]) > 0 and len(actions) > 10:
+                actions = random.sample(actions, 10)
+
         self._children = [TreeSearchNode(self._state.expand(a),
                                          parent=(self, a))
                           for a in actions]
@@ -490,7 +493,7 @@ class TreeSearchNode:
 
         return dfs(self)
 
-    def _actions_logprob_under_policy(self, actions, policy: 'Policy') -> float:
+    def _actions_logprob_under_policy(self, cfg, actions, policy: 'Policy') -> float:
         if self.is_solved():
             return 0
 
@@ -498,7 +501,7 @@ class TreeSearchNode:
             breakpoint()
             raise RuntimeError("Actions lead to terminal non-solved node.")
 
-        self.expand()
+        self.expand(cfg)
 
         if self.is_conjunctive():
             logprob = 0
@@ -508,12 +511,12 @@ class TreeSearchNode:
             for sna, a in zip(actions, node_actions):
                 logprob += (TreeSearchNode(self._state.expand(a),
                                            parent=(self, a))
-                            ._actions_logprob_under_policy(sna, policy))
+                            ._actions_logprob_under_policy(cfg, sna, policy))
             return logprob
         else:
-            policy.initialize(self)
+            policy.initialize(cfg, self)
             curr_time = time.time()
-            pi, _value = policy.evaluate(self)
+            pi, _value = policy.evaluate(cfg, self)
             # print(f"evaluation took {time.time()-curr_time}s")
             assert actions
 
@@ -525,17 +528,19 @@ class TreeSearchNode:
 
             if idx >= len(pi):
                 breakpoint()
-
-            head_logprob = math.log(float(pi[idx]))
+            if pi[idx] >= 1.0 - 1e-7:
+                head_logprob = 0.0
+            else:
+                head_logprob = math.log(float(pi[idx]))
             # print(a, head_logprob)
             tail_logprob = (TreeSearchNode(self.state_node.expand(a),
                                            parent=(self, a))
-                            ._actions_logprob_under_policy(tail, policy))
+                            ._actions_logprob_under_policy(cfg, tail, policy))
             return head_logprob + tail_logprob
 
-    def solution_logprob_under_policy(self, policy: 'Policy', actions=None) -> float:
+    def solution_logprob_under_policy(self, cfg, policy: 'Policy', actions=None) -> float:
         return (TreeSearchNode(self._state, None)
-                ._actions_logprob_under_policy(actions or self.get_solution_actions(),
+                ._actions_logprob_under_policy(cfg, actions or self.get_solution_actions(),
                                                policy))
 
 
@@ -629,10 +634,10 @@ class TreeSearchNode:
 
 class Policy:
     'Abstract policy class: given a proof state, returns a distribution over its actions.'
-    def evaluate(self, state: TreeSearchNode) -> np.array:
+    def evaluate(self, cfg, state: TreeSearchNode) -> np.array:
         raise NotImplementedError
 
-    def initialize(self, leaf: TreeSearchNode):
+    def initialize(self, cfg, node: TreeSearchNode):
         pass
 
     def train(self, examples):
@@ -649,7 +654,7 @@ class UniformPolicy(Policy):
     def __init__(self, _config):
         pass
 
-    def evaluate(self, node: TreeSearchNode) -> np.array:
+    def evaluate(self, cfg, node: TreeSearchNode) -> np.array:
         n = len(node.actions)
         value = node.state_node.reward()
         return np.ones(n) / n, value
@@ -657,7 +662,7 @@ class UniformPolicy(Policy):
     def extract_examples(self, root) -> list:
         return []
 
-    def initialize(self, node: TreeSearchNode):
+    def initialize(self, cfg, node: TreeSearchNode):
         if node.is_terminal() or node.is_dead():
             return
 
@@ -677,7 +682,7 @@ class LMPolicy(Policy):
         self._batch_size = config.get('batch_size', 1000)
         self._lm.eval()
 
-    def evaluate(self, node: TreeSearchNode) -> np.array:
+    def evaluate(self, cfg, node: TreeSearchNode) -> np.array:
         if node.is_terminal():
             return [], 1e6
 
@@ -686,27 +691,28 @@ class LMPolicy(Policy):
 
         return [c._prior_policy for c in node._children], node._value_estimate
 
-    def initialize(self, node: TreeSearchNode):
+    def initialize(self, cfg, node: TreeSearchNode):
         if node.is_terminal() or node.is_dead():
             return
 
         children_states = [str(c.state_node) for c in node._children]
         actions = [str(a) for a in node.actions]
         policy_queries = [] if node.is_conjunctive() else actions
-        if "intro." in actions:
+        if "intro." in actions and cfg.intro_skip:
             policy_estimates = [0 for i in actions]
             policy_estimates[actions.index("intro.")] = 1
             value_estimates = policy_estimates[:]
         else:
             policy_estimates, value_estimates = self._lm.estimate_state_and_action_values(
                     str(node.state_node),
-                    actions,
+                    node.actions,
                     children_states)
-        for i, a in enumerate(actions):
-            if " c" in a:
-                policy_estimates[i] *= 2
-                value_estimates[i] *= 2
-                # print(a)
+        if cfg.support_theorem_use:
+            for i, a in enumerate(actions):
+                if " c" in a:
+                    policy_estimates[i] *= 2
+                    value_estimates[i] *= 2
+                    # print(a)
 
         if node.is_conjunctive():
             policy_estimates = [1 for _ in actions]
@@ -840,10 +846,10 @@ class MonteCarloTreeSearch(Policy):
         self._exploration_prefix = exploration_prefix
         self._use_default_policy = use_policy
 
-    def expand(self, root: TreeSearchNode, on_expand=None, verbose=True):
-        return self.evaluate(root, on_expand=on_expand, verbose=verbose)
+    def expand(self, cfg, root: TreeSearchNode, on_expand=None, verbose=True):
+        return self.evaluate(cfg, root, on_expand=on_expand, verbose=verbose)
 
-    def evaluate(self, root: TreeSearchNode, start_index=0,
+    def evaluate(self, cfg, root: TreeSearchNode, start_index=0,
                  on_expand=None, verbose=True) -> np.array:
         for i in range(self._budget):
             if root.is_solved():
@@ -864,16 +870,16 @@ class MonteCarloTreeSearch(Policy):
                 self._backpropagate_reward(leaf, 1)
                 continue
 
-            leaf.expand()
+            leaf.expand(cfg)
 
             if self._use_default_policy and self._default_policy:
-                self._default_policy.initialize(leaf)
+                self._default_policy.initialize(cfg, leaf)
 
             if on_expand is not None:
                 path = leaf.get_path_from_root()
                 on_expand([str(a) for a in path])
 
-            _, reward = self._default_policy.evaluate(leaf)
+            _, reward = self._default_policy.evaluate(cfg, leaf)
             self._backpropagate_reward(leaf, reward)
 
         pi = self._policy(root)
@@ -1005,7 +1011,7 @@ class ProofSearchAgent:
         self._checkpoints = 0
         self._examples = []
 
-    def proof_search(self, problem: str, state: peano.PyProofState, verbose: bool =False):
+    def proof_search(self, cfg, problem: str, state: peano.PyProofState, verbose: bool =False):
         root = TreeSearchNode(self._node_type([state]))
 
         node = root
@@ -1017,7 +1023,7 @@ class ProofSearchAgent:
                 print('State:', node.state_node)
 
             mcts = MonteCarloTreeSearch(self._policy, self._max_mcts_nodes, use_policy=True)
-            solved, pi, _, it = mcts.evaluate(node, verbose=verbose)
+            solved, pi, _, it = mcts.evaluate(cfg, node, verbose=verbose)
 
             if solved:
                 break
@@ -1089,7 +1095,7 @@ def mcts_example(cfg):
     print(root.state_node)
     mcts = MonteCarloTreeSearch(p, 3000)
 
-    solved, pi, _ = mcts.evaluate(root)
+    solved, pi, _ = mcts.evaluate(cfg, root)
 
     print('Actions:', list(map(str, root.actions)))
     print('MCTS Policy:', pi)
@@ -1195,7 +1201,7 @@ def test_agent(config: DictConfig):
         root = TreeSearchNode(HolophrasmNode([problem]))
         mcts = MonteCarloTreeSearch(UniformPolicy(), config.get('mcts_iterations', 500),
                                     exploration_prefix=config.get('prefix'))
-        mcts.evaluate(root)
+        mcts.evaluate(config, root)
 
     visualize_search_tree(root, dot_path, min_visits=config.get('min_visits', 10))
     print('Wrote', os.path.abspath(dot_path))
@@ -1323,7 +1329,7 @@ def test_proof_search(problemset='lean-library-logic',
     print(repr(actions_list))
 
 
-def make_agent(config):
+def make_agent(config) -> ProofSearchAgent:
     if config.get('agent_path'):
         agent = torch.load(config['agent_path'])
     elif config.agent.get('type') == 'curiosity':
