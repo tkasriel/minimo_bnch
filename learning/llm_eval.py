@@ -3,10 +3,12 @@ import json
 import os
 import random
 import re
+import sys
 import time
 from typing import Awaitable
 from openai import AsyncOpenAI
 import dotenv
+from pydantic import BaseModel
 import tqdm
 from tqdm.asyncio import tqdm_asyncio
 
@@ -18,25 +20,37 @@ print (f"OPENAI API KEY: {os.getenv('OPENAI_API_KEY')}")
 client = AsyncOpenAI()
 MODEL = "gpt-4.1"
 
-def _extract_theorems_from_outcomes(outcomes_filepath: str, logprobs: bool = False) -> list[str] | list[tuple]:
+class Theorem(BaseModel):
+    thm_string: str
+    iteration: int
+    logprob: float
+    thm_string_simple: str
+    explanation: str = ""
+    def __str__(self) -> str:
+        return f"{self.thm_string} (iteration {self.iteration}) : {self.logprob}"
+
+def _extract_theorems_from_outcomes(outcomes_filepath: str, logprobs: bool = False, include_hindsight: bool = False, include_unproven: bool = False) -> list[Theorem]:
     with open(outcomes_filepath) as f:
         outcomes = json.load(f)
     results = []
     for i, o in enumerate(outcomes):
-        if o.get("hindsight", False):
+        if o.get("hindsight", False) and not include_hindsight:
+            continue
+        if not o.get("proof", False) and not include_unproven:
             continue
         if "problem_translated" not in o.keys():
             # Old non-translated problems, pre-dsprover
             o["problem_translated"] = convert_arith(o["problem"], i, flag_matters=False)
+        # if i == 2815:
+        #     print(o)
+        #     sys.exit(0)
+        if o["logprob"] is None:
+            o["logprob"] = 1.0
         thm_str = f"theorem problem{i} : {o['problem_translated']}"
-        if logprobs:
-            try:
-                if float(o["logprob"]) < 0:
-                    results.append((o["problem_translated"], float(o["logprob"])))
-            except:
-                continue
-        else:
-            results.append(thm_str)
+        results.append(Theorem(thm_string=thm_str,
+                                thm_string_simple=o["problem_translated"],
+                                iteration=int(o.get("iteration", -1)),
+                                logprob=float(o.get("logprob", 0.0))))
     return results
 
 def _make_prompts (theorems: list[str]) -> list[list[dict[str]]]:
@@ -71,7 +85,7 @@ On the last line, say either USEFUL or NOT USEFUL and nothing else.
     return chats
 
 
-async def _remove_dedup (useful_theorems: list[tuple[str, str]]) -> tuple[list[tuple[str,str]], tuple[str, str]]:
+async def _remove_dedup (useful_theorems: list[Theorem]) -> tuple[list[Theorem], tuple[str, str]]:
     prompt = """I have a set of lean theorems, some of which are very similar to each other. I want to use them as tactics for proof generation. 
 Please remove the duplicates, so that I can have a list of only unique theorems.
 For example, the following four theorems would be duplicates of each other:
@@ -88,11 +102,11 @@ Here is my list of theorems for you to remove duplicates for.
 {}
 I also have attached an explanation for why each could be useful for a theorem prover.
 {}
-Think it through step by step, and then return the list of unique theorems from this list in a list format inside of a ```lean4``` code block. Make sure your answer is inside the very last lean codeblock
+Think it through step by step, and then return the list of unique theorems from this list in a list format inside of a ```lean4``` code block. Make sure your answer is inside the very last lean codeblock. Please make sure to repeat the theorems exactly as I wrote them.
 """
     chat = [
         {"role": "developer", "content": "You are an expert at evaluating lean theorems"},
-        {"role": "user", "content": prompt.format('\n'.join([u[0] for u in useful_theorems]), "\n\n".join(['\n'.join(u) for u in useful_theorems]))}
+        {"role": "user", "content": prompt.format('\n'.join([u.thm_string for u in useful_theorems]), "\n\n".join(['\n'.join(u.thm_string + "\n" + u.explanation) for u in useful_theorems]))}
     ]
     # print(chat[1]["content"][:8000])
     completion = await client.chat.completions.create(
@@ -103,12 +117,12 @@ Think it through step by step, and then return the list of unique theorems from 
     print(res)
     assert res
     res_theorems: str = re.findall(r'(?s)```lean.*```', res)[-1]
-    outs: list[tuple[str,str]] = []
+    outs: list[Theorem] = []
     for res_thm in res_theorems.split('\n'):
         if '```' in res_thm:
             continue
         for ut in useful_theorems:
-            if res_thm == ut[0]:
+            if res_thm == ut.thm_string:
                 outs.append(ut)
     return outs, (res_theorems, res)
 
@@ -117,8 +131,9 @@ async def run_evaluation (outcomes_filepath: str, output_folder_path: str) -> No
     os.makedirs(output_folder_path, exist_ok = True)
     if not os.path.exists(outcomes_filepath):
         raise FileNotFoundError(f"Cannot find outcomes file")
-    theorem_list: list[str] = _extract_theorems_from_outcomes(outcomes_filepath)
-    prompt_list = _make_prompts(theorem_list)
+    theorem_list: list[Theorem] = _extract_theorems_from_outcomes(outcomes_filepath, include_unproven=False)
+
+    prompt_list = _make_prompts([t.thm_string for t in theorem_list])
     promises: list[Awaitable] = []
 
     print(f"Sending {len(prompt_list)} requests in 5s")
@@ -127,12 +142,12 @@ async def run_evaluation (outcomes_filepath: str, output_folder_path: str) -> No
     for prompt in prompt_list:
         completion = client.chat.completions.create(
             model= MODEL,
-            messages=prompt
+            messages=prompt # type: ignore
         )
         promises.append(completion)
     print("All requests sent")
 
-    useful_theorems: list[tuple[str,str]] = []
+    useful_theorems: list[Theorem] = []
     results = []
     batch_size = 100
     for batch_i in tqdm.tqdm(range(0, len(promises), batch_size)):
@@ -140,19 +155,19 @@ async def run_evaluation (outcomes_filepath: str, output_folder_path: str) -> No
     # results: list = await tqdm_asyncio.gather(*promises)
     for theorem, completion in zip(theorem_list, results):
         response: str = completion.choices[0].message.content
+        theorem.explanation = response
         if "NOT" not in response.split("\n")[-1]:
-            useful_theorems.append((theorem, response))
-    
+            useful_theorems.append(theorem)
     
     with open(os.path.join(output_folder_path, "useful_theorems.txt"), "w") as f:
-        for tup in useful_theorems:
-            f.write(tup[0] + "\n" + tup[1] + "\n ============ \n\n")
+        for thm in useful_theorems:
+            f.write(str(thm) + "\n" + thm.explanation + "\n ============ \n\n")
     
     
     useful_theorems = (await _remove_dedup(useful_theorems))[0]
     with open(os.path.join(output_folder_path, "useful_theorem_dedup.txt"), "w") as f:
-        for tup in useful_theorems:
-            f.write(tup[0] + "\n" + tup[1] + "\n ============ \n\n")
+        for thm in useful_theorems:
+            f.write(str(thm) + "\n" + thm.explanation + "\n ============ \n\n")
     print ("RESULTS:")
     print (f"Useful theorems: {len(useful_theorems)}/{len(results)}")
 
@@ -161,8 +176,16 @@ async def remove_dedup_fix (output_folder_path: str) -> None:
         lines = ("\n".join(f.readlines())).split("============")
     useful_theorems = []
     for l in lines[1:]:
-        l = '\n'.join([line for line in l.split('\n') if line.strip()])
-        useful_theorems.append((l.split('\n')[0], '\n'.join(l.split('\n')[1:])))
+        l = [line for line in l.split('\n') if line.strip()]
+        theorem_name = l[0].split(" (iteration ")[0]
+        it = int((l[0].split(" (iteration ")[1])[0])
+        logprob = float(l[0].split(" : ")[-1])
+
+        useful_theorems.append(Theorem(thm_string=theorem_name,
+                                       thm_string_simple="",
+                                       iteration=it,
+                                       logprob=logprob,
+                                       explanation = "\n".join(l[1:])))
     results = await _remove_dedup(useful_theorems)
     with open (os.path.join(output_folder_path, "useful_theorems_dedup_fix.txt"), "w") as f:
         f.write(results[1][0] + "\n\n" + results[1][1])
@@ -309,14 +332,25 @@ def look_at_graph (input_filepath: str) -> None:
     print(cnts)
     # for v in cnts[]
 
-
+def count_its (filename: str) -> None:
+    with open(filename) as f:
+        lines = f.readlines()
+    counts = [0 for i in range(10)]
+    for l in lines:
+        x = l.split()
+        for i, c in enumerate(x):
+            if "iteration" in c:
+                it = int(x[i+1][0])
+                counts[it] += 1
+    print(counts)
 
 
 
 
 if __name__ == "__main__":
-    OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/line15"
-    print (f"Current evaluation: {os.path.basename(OUTPUT_FOLDER)}")
+    OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/line19"
+    # count_its("/home/timothekasriel/minimo/learning/outputs/line18/useful_theorems.txt")
+    # print (f"Current evaluation: {os.path.basename(OUTPUT_FOLDER)}")
     asyncio.run(run_evaluation(os.path.join(OUTPUT_FOLDER, "outcomes_9.json"), OUTPUT_FOLDER))
     asyncio.run(remove_dedup_fix(OUTPUT_FOLDER))
     # send_batch_evaluation("/Users/tkasriel/code/rsh/minimo/learning/outputs/orig_minimo/outcomes_arith.json", OUTPUT_FOLDER, "Original Minimo Arithmetic Evaluation")

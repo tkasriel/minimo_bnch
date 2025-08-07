@@ -217,6 +217,8 @@ async def teacher_loop(cfg: DictConfig):
         os.makedirs(continue_dir, exist_ok=True)
         os.chdir(continue_dir)
         print('Continuing run from', continue_dir)
+        with open("flags.txt", "w") as f:
+            f.write(str(cfg))
         # Find largest iteration number such that i.pt exists.
         i = 0
         while os.path.exists(f'{i}.pt'):
@@ -497,6 +499,34 @@ async def teacher_loop(cfg: DictConfig):
                                     'msg': f'Training on {len(examples)} examples.'}))
             
             torch.save(student_results, f'results_{i}.json')
+
+    
+    if cfg.prove_all_at_end:
+        print ("Attempting final proof")
+        final_outcomes: list[ProofOutcome] = []
+        to_prove_again = [o.problem for o in outcomes if not o.hindsight]
+        if cfg.use_multiprocessing:
+            res = batch_prove(cfg, to_prove_again, theory, premises, instruction_queue, output_queue)
+        else:
+            res = []
+            background_theory = worker.BackgroundTheory(theory, premises)
+            for o in tqdm(to_prove_again):
+                res.append(worker.try_prove(cfg, agent, background_theory, o))
+        for r in res:
+            final_outcomes.append(ProofOutcome(
+                                iteration=-1,
+                                problem=r.problem,
+                                problem_raw=comp_to_raw_dict.get(r.problem, None),
+                                problem_translated=str(convert_arith(r.problem, 0, False)),
+                                proof=r.proof,
+                                logprob=r.logprob,
+                                actions=r.solution_actions,
+                                hindsight=False,
+                                seed_used=seed_used.get(r.problem)))
+        save_json(final_outcomes, "final_outcomes.json")
+        
+
+
     if cfg.use_multiprocessing:
         for process in processes: # type: ignore
             instruction_queue.put(MPInstruction(instruction=InstructionEnum.STOP, theory=("",[]))) # type: ignore

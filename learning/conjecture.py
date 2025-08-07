@@ -422,8 +422,6 @@ def sample_conjecture(cfg, lm, context, previous_conjectures: list[str], seed = 
             # if ":" in generation_no_seed and generation_no_seed[0] != "[":
             #     return "[" + generation_no_seed
             if has_trivial_outcome(generation) and cfg.trivial_filtering:
-                #print('TRIVIAL OUTCOME:', generation)
-                # Reject this conjecture and start over
                 generation = seed if seed else ''
                 continue
             #else:
@@ -459,14 +457,18 @@ def sample_conjecture(cfg, lm, context, previous_conjectures: list[str], seed = 
             scores = list(map(math.exp, lm.score(choices, mean=False, prefix=generation)))
             
             # Favor novel directions
+            weighted_scores = scores
             if cfg.support_novelty:
-                weighted_scores = []
-                for c, s in zip(choices, scores):
+                for i, _ in enumerate(zip(choices, scores)):
+                    c, s = _
                     count = sum([(1 if generation + c == t[:len(generation)+1] else 0) for t in previous_conjectures])
-                    weighted_scores.append(s / (count + 1))
-                choice = random.choices(choices,weights=weighted_scores)[0]
-            else:
-                choice = random.choices(choices,)[0]
+                    weighted_scores[i] = (s / (count + 1))
+            if cfg.increase_variable_conjecturing:
+                for i, c in enumerate(choices):
+                    if "[" in c or "'" in c: # 
+                        weighted_scores[i] *= 2
+            
+            choice = random.choices(choices,weights=weighted_scores)[0]
             generation += choice
             # Filter completions to those starting with the chosen character and drop the character.
             completions = [c[1:] for c in completions if c.startswith(choice)]
