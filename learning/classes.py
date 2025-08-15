@@ -12,7 +12,7 @@ class InstructionEnum(str, Enum):
 
 class MPInstruction (BaseModel):
     instruction: InstructionEnum
-    agent_file: str
+    agent_file: str | None = None
     seed: str | None = None
     thm_to_prove: str | None = None
     theory: tuple[str, list[str]]

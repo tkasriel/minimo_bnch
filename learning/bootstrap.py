@@ -63,7 +63,7 @@ def process_main(id: int, cfg, instruction_queue: mp.Queue, output_queue: mp.Que
             context = Context(d, None, [])
         
         # Renew agent if needed:
-        if agent_file != instruction.agent_file:
+        if instruction.agent_file and agent_file != instruction.agent_file:
             agent_file = instruction.agent_file
             agent = torch.load(agent_file, map_location=None if torch.cuda.is_available() else "cpu", weights_only=False)
 
