@@ -54,9 +54,10 @@ def try_prove(cfg, agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory
                                statement)
 
     #print(f"Instantiating peano state took {time.time()-curr_time:02.1f}s")
-
     try:
+        # start_proof_time = time.time()
         agent_result = agent.proof_search(cfg, statement, state, verbose)
+        # print (f"Proof took {time.time()-start_proof_time()}")
 
         if agent_result.success:
             proof = agent_result.root.state_node.reconstruct_proof(
@@ -81,7 +82,7 @@ def try_prove(cfg, agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory
         # print(f"worker, curr allocated (post-del): {torch.cuda.memory_allocated()}")
         #print(f"Got {len(hindsight_examples)} examples")
         #print(f"Extracting examples took {time.time()-curr_time:02.1f}s")
-        curr_time = time.time()
+        # curr_time = time.time()
 
 
         return StudentResult(

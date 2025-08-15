@@ -216,9 +216,12 @@ class HolophrasmNode(ProofStateNode):
             return [f'{i}' for i in range(len(self._proof_states))]
 
         # Single state: actually list out actions from Peano.
+        st_time = time.time()
         if HolophrasmNode.EAGER_NODES:
             peano_actions = list(filter(verify_action, self._proof_states[0].actions()))
             eager_actions = []
+            # line2 = time.time()
+            # print (f"Line 2.1.1: {line2-st_time}")
 
             for a in peano_actions:
                 if a.is_intro():
@@ -229,6 +232,8 @@ class HolophrasmNode(ProofStateNode):
                         eager_actions.append(ProofAction([a]))
                 else:
                     eager_actions.append(ProofAction([a]))
+            # line3 = time.time()
+            # print (f"Line 2.1.2: {line3-line2}")
             return eager_actions
         else:
             # Lazy nodes - straight actions from Peano.
@@ -447,6 +452,7 @@ class TreeSearchNode:
         # before = time.time()
         actions = [a for a in self.state_node.actions
                    if len(str(a).split(' : ')[0].lstrip('=> ')) <= MAX_ACTION_LENGTH]
+        # line2 = time.time()
         
         if cfg.max_proof_expansion > 0:
             if sum([1 if " c" in str(a) else 0 for a in actions]) > 0 and len(actions) > 10:
@@ -455,6 +461,9 @@ class TreeSearchNode:
         self._children = [TreeSearchNode(self._state.expand(a),
                                          parent=(self, a))
                           for a in actions]
+        # line3 = time.time()
+        # print(f"Line 2.1 {line2-before}")
+        # print(f"Line 2.2 {line3-line2}")
         return
         after = time.time()
         if after - before > ACTION_ENUMERATION_TIMEOUT:
@@ -851,16 +860,24 @@ class MonteCarloTreeSearch(Policy):
 
     def evaluate(self, cfg, root: TreeSearchNode, start_index=0,
                  on_expand=None, verbose=True) -> np.array:
+        # breakpoint()
+        st_time = time.time()
         for i in range(self._budget):
             if root.is_solved():
                 break
-
+            if time.time() - st_time > 60:
+                breakpoint()
+            
             leaf = self._tree_policy(root)
+            # line1 = time.time()
+            # print (f"Line 1: {line1 - st_time}")
 
             if leaf is None:
                 # Ended up visiting a node where all children were dead,
                 # so forcefully would end up in a dead node. The parent
                 # is marked as dead so this won't repeat in the same branch.
+                if time.time() - st_time > 60:
+                    breakpoint()
                 continue
 
             leaf._index = start_index + i
@@ -868,19 +885,37 @@ class MonteCarloTreeSearch(Policy):
             if leaf.is_terminal():
                 leaf.mark_solved()
                 self._backpropagate_reward(leaf, 1)
+                if time.time() - st_time > 60:
+                    breakpoint()
                 continue
 
             leaf.expand(cfg)
+            if time.time() - st_time > 60:
+                breakpoint()
 
             if self._use_default_policy and self._default_policy:
                 self._default_policy.initialize(cfg, leaf)
+            if time.time() - st_time > 60:
+                breakpoint()
+
 
             if on_expand is not None:
                 path = leaf.get_path_from_root()
                 on_expand([str(a) for a in path])
+            if time.time() - st_time > 60:
+                breakpoint()
 
             _, reward = self._default_policy.evaluate(cfg, leaf)
+            if time.time() - st_time > 60:
+                breakpoint()
+
             self._backpropagate_reward(leaf, reward)
+            if time.time() - st_time > 60:
+                breakpoint()
+
+            if time.time() - st_time > 60:
+                breakpoint()
+                print('')
 
         pi = self._policy(root)
         value = max(p * (c._reward / max(1, c._visits))
@@ -1018,12 +1053,14 @@ class ProofSearchAgent:
         iterations = 0
         examples = []
 
+        st_time = time.time()
         while not (node.is_terminal() or node.is_dead()):
             if verbose:
                 print('State:', node.state_node)
 
             mcts = MonteCarloTreeSearch(self._policy, self._max_mcts_nodes, use_policy=True)
             solved, pi, _, it = mcts.evaluate(cfg, node, verbose=verbose)
+            
 
             if solved:
                 break
@@ -1052,7 +1089,7 @@ class ProofSearchAgent:
         examples = self._policy.extract_examples(root)
         self._examples.extend(examples)
         self._examples = self._examples[-self._max_examples:]
-
+        print (f"Proving took {time.time()-st_time}")
         return ProofSearchResult(problem, solved, root, examples, iterations)
 
     def train(self, examples=None):
@@ -1093,7 +1130,7 @@ def mcts_example(cfg):
 
     p = LMPolicy(cfg.agent.policy)
     print(root.state_node)
-    mcts = MonteCarloTreeSearch(p, 3000)
+    mcts = MonteCarloTreeSearch(p, 600)
 
     solved, pi, _ = mcts.evaluate(cfg, root)
 

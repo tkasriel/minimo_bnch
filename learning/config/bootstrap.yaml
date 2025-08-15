@@ -16,10 +16,13 @@ seed: False
 trivial_filtering: False
 train_on_usefulness_testing: False
 support_theorem_use: False
-intro_skip: False
 support_novelty: False
+intro_skip: False
 max_proof_expansion: -1 # -1 for no max
 metric_use_useage: False
+increase_variable_conjecturing: False
+prove_all_at_end: False
+
 
 difficulty_buckets:
     - hard: 20

@@ -9,6 +9,7 @@ import os
 import json
 import datetime
 import random
+import sys
 import time
 
 import hydra
@@ -27,6 +28,11 @@ from util import format_blocks_with_indent, get_seed_statement, sample_batch, se
 from conjecture import AgentLM, Context, sample_conjecture
 from proofsearch import ProofSearchAgent, make_agent
 import re
+import cProfile
+from pympler import tracker
+import objgraph
+import psutil
+from pympler import muppy, summary
 
 def now() -> str:
     return '[' + datetime.datetime.now().isoformat() + ']'
@@ -37,8 +43,8 @@ CONJECTURE_PROMPT= 'Conj:(hard,useful) '
 
 def process_main(id: int, cfg, agent: ProofSearchAgent, instruction_queue: mp.Queue, output_queue: mp.Queue):
     instruction: MPInstruction | None = None
-    from dotenv import load_dotenv
-    load_dotenv()
+    # from dotenv import load_dotenv
+    # load_dotenv()
     
     # Unfortunately PyDerivation is not pickle-able and I don't know enough rust to fix that
     current_theory = ""
@@ -46,9 +52,15 @@ def process_main(id: int, cfg, agent: ProofSearchAgent, instruction_queue: mp.Qu
     d = None
     context = None
     print(f"Process {id} ready")
-
+    sys.stdin = open(0)
+    # tr = tracker.SummaryTracker()
+    process = psutil.Process(os.getpid())
+    # 
+    # all_objects = muppy.get_objects()
+    # breakpoint()
     while not instruction or instruction.instruction != InstructionEnum.STOP:
         instruction = MPInstruction.model_validate(instruction_queue.get())
+        profiler = cProfile.Profile()
         
         # Import new theory if needed
         if instruction.theory[0] != current_theory:
@@ -70,8 +82,26 @@ def process_main(id: int, cfg, agent: ProofSearchAgent, instruction_queue: mp.Qu
         elif instruction.instruction == InstructionEnum.PROOF:
             assert instruction.thm_to_prove
             assert type(background_theory) is worker.BackgroundTheory
+            st_time = time.time()
+            profiler.enable()
+            
+            
             result = worker.try_prove(cfg, agent, background_theory, instruction.thm_to_prove, verbose=False)
+            # tr.print_diff()
+            # breakpoint()
+            profiler.disable()
+            end_time = time.time()
+            if end_time - st_time > 300: # check what's going on with the longer proofs
+                all_objs = muppy.get_objects()
+                summ = summary.summarize(all_objs)
+                summary.print_(summ)
+                # breakpoint()
+                del all_objs, summ
+                if "continue" in cfg.keys():
+                    profiler.dump_stats(os.path.join(cfg["continue"], f"profiler_res_{id}.txt"))
+                profiler.dump_stats(f"profiler_res_{id}.txt")
             output_queue.put(MPResult(instruction=InstructionEnum.PROOF, result=result, time_taken=time.time()-start_time))
+        print (f"Curr memory : {process.memory_info()[0] / float(2 ** 20)}")
     output_queue.put(MPResult(instruction=InstructionEnum.STOP, result=id, time_taken=0.0))
 
 def batch_prove (cfg, conjectures: list[str], theory: str, premises: list[str], instruction_queue : mp.Queue, output_queue: mp.Queue) -> list[StudentResult]:
@@ -179,7 +209,7 @@ def extract_examples(cfg, difficulty_buckets, permanent_deriv, seen_hindsight_go
             examples.extend(h.examples)
  
 
-async def teacher_loop(cfg: DictConfig):
+def teacher_loop(cfg: DictConfig):
     if cfg.use_multiprocessing:
         mp.set_start_method(cfg.mp_start_method)
 
@@ -275,9 +305,19 @@ async def teacher_loop(cfg: DictConfig):
                                                                  "output_queue": output_queue})
             new_process.start()
             processes.append(new_process)
+
+    # conjectures_test = ["[('a0 : nat) -> ('a1 : (= o 'a0)) -> (= (s z) 'a0)]",
+    #                     "[('a0 : nat) -> ('a1 : (= 'a0 z)) -> (= z 'a0)]"]
+                        # "[('a0 : nat) -> ('a1 : (= z (+ z o))) -> (= (+ z o) (* (* (s 'a0) (s 'a0)) z))]",
+                        # "[('a0 : (= z o)) -> ('a1 : nat) -> ('a2 : (= o 'a1)) -> ('a3 : nat) -> ('a4 : (= (s z) o)) -> (= o 'a1)]",
     
+    # for i in range(10):
+    #     thms = random.sample(useful_theorems, k=10)
+    #     new_theory = theory + "\n\n" + "\n\n".join(map(lambda x: x.theorem, thms))
+    #     new_premises = premises + [thm.theorem.split(" : ")[0] for thm in thms]
+    #     batch_prove(cfg, conjectures_test, new_theory, new_premises, instruction_queue, output_queue)
+    # return
     with open('log.jsonl', 'w') as log:
-        
         for i in range(start_iteration, cfg.iterations):
             start_time = time.time()
             torch.save(agent, f'{i}.pt')
@@ -539,7 +579,7 @@ def main(cfg: DictConfig):
     print('Running from:', os.getcwd())
     setup_wandb(cfg)
     if cfg.task == 'teacher':
-        asyncio.run(teacher_loop(cfg))
+        teacher_loop(cfg)
 
 if __name__ == '__main__':
     main()
