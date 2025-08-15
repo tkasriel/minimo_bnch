@@ -9,8 +9,10 @@ class InstructionEnum(str, Enum):
     PROOF = "PROOF"
     STOP = "STOP"
 
+
 class MPInstruction (BaseModel):
     instruction: InstructionEnum
+    agent_file: str
     seed: str | None = None
     thm_to_prove: str | None = None
     theory: tuple[str, list[str]]

@@ -29,10 +29,6 @@ from conjecture import AgentLM, Context, sample_conjecture
 from proofsearch import ProofSearchAgent, make_agent
 import re
 import cProfile
-from pympler import tracker
-import objgraph
-import psutil
-from pympler import muppy, summary
 
 def now() -> str:
     return '[' + datetime.datetime.now().isoformat() + ']'
@@ -41,23 +37,19 @@ def now() -> str:
 FAIL = "fail"
 CONJECTURE_PROMPT= 'Conj:(hard,useful) '
 
-def process_main(id: int, cfg, agent: ProofSearchAgent, instruction_queue: mp.Queue, output_queue: mp.Queue):
+def process_main(id: int, cfg, instruction_queue: mp.Queue, output_queue: mp.Queue):
     instruction: MPInstruction | None = None
-    # from dotenv import load_dotenv
-    # load_dotenv()
     
     # Unfortunately PyDerivation is not pickle-able and I don't know enough rust to fix that
+    agent_file: str | None = None
+    agent = None #torch.load(agent_file, map_location=None if torch.cuda.is_available() else "cpu", weights_only=False)
     current_theory = ""
     background_theory = None
     d = None
     context = None
     print(f"Process {id} ready")
     sys.stdin = open(0)
-    # tr = tracker.SummaryTracker()
-    process = psutil.Process(os.getpid())
-    # 
-    # all_objects = muppy.get_objects()
-    # breakpoint()
+
     while not instruction or instruction.instruction != InstructionEnum.STOP:
         instruction = MPInstruction.model_validate(instruction_queue.get())
         profiler = cProfile.Profile()
@@ -69,6 +61,12 @@ def process_main(id: int, cfg, agent: ProofSearchAgent, instruction_queue: mp.Qu
             d = peano.PyDerivation() # type: ignore
             d.incorporate(current_theory)
             context = Context(d, None, [])
+        
+        # Renew agent if needed:
+        if agent_file != instruction.agent_file:
+            agent_file = instruction.agent_file
+            agent = torch.load(agent_file, map_location=None if torch.cuda.is_available() else "cpu", weights_only=False)
+
         
         # Process each instruction
         start_time = time.time()
@@ -82,31 +80,29 @@ def process_main(id: int, cfg, agent: ProofSearchAgent, instruction_queue: mp.Qu
         elif instruction.instruction == InstructionEnum.PROOF:
             assert instruction.thm_to_prove
             assert type(background_theory) is worker.BackgroundTheory
-            st_time = time.time()
-            profiler.enable()
-            
-            
+            # st_time = time.time()
+            # profiler.enable()
             result = worker.try_prove(cfg, agent, background_theory, instruction.thm_to_prove, verbose=False)
             # tr.print_diff()
             # breakpoint()
-            profiler.disable()
-            end_time = time.time()
-            if end_time - st_time > 300: # check what's going on with the longer proofs
-                all_objs = muppy.get_objects()
-                summ = summary.summarize(all_objs)
-                summary.print_(summ)
-                # breakpoint()
-                del all_objs, summ
-                if "continue" in cfg.keys():
-                    profiler.dump_stats(os.path.join(cfg["continue"], f"profiler_res_{id}.txt"))
-                profiler.dump_stats(f"profiler_res_{id}.txt")
+            # profiler.disable()
+            # end_time = time.time()
+            # if end_time - st_time > 300: # check what's going on with the longer proofs
+            #     all_objs = muppy.get_objects()
+            #     summ = summary.summarize(all_objs)
+            #     summary.print_(summ)
+            #     # breakpoint()
+            #     del all_objs, summ
+            #     if "continue" in cfg.keys():
+            #         profiler.dump_stats(os.path.join(cfg["continue"], f"profiler_res_{id}.txt"))
+            #     profiler.dump_stats(f"profiler_res_{id}.txt")
             output_queue.put(MPResult(instruction=InstructionEnum.PROOF, result=result, time_taken=time.time()-start_time))
-        print (f"Curr memory : {process.memory_info()[0] / float(2 ** 20)}")
+        # print (f"Curr memory : {process.memory_info()[0] / float(2 ** 20)}")
     output_queue.put(MPResult(instruction=InstructionEnum.STOP, result=id, time_taken=0.0))
 
-def batch_prove (cfg, conjectures: list[str], theory: str, premises: list[str], instruction_queue : mp.Queue, output_queue: mp.Queue) -> list[StudentResult]:
+def batch_prove (cfg, agent_file: str, conjectures: list[str], theory: str, premises: list[str], instruction_queue : mp.Queue, output_queue: mp.Queue) -> list[StudentResult]:
     for conjecture in conjectures:
-        instruction_queue.put(MPInstruction(instruction=InstructionEnum.PROOF, thm_to_prove=conjecture, theory=(theory, premises)))
+        instruction_queue.put(MPInstruction(instruction=InstructionEnum.PROOF, agent_file=agent_file, thm_to_prove=conjecture, theory=(theory, premises)))
     
     # Process results
     num_dead = 0
@@ -141,13 +137,14 @@ def batch_prove (cfg, conjectures: list[str], theory: str, premises: list[str], 
     progress_bar.close()
     return student_results
 
-def batch_conjecture (cfg, proven_conjectures: list[str], comp_to_raw_dict: dict[str, str], permanent_deriv, seed_used: dict[str,str], theory: str, premises: list[str], instruction_queue: mp.Queue, output_queue: mp.Queue) -> list[str]:
+def batch_conjecture (cfg, agent_file: str, proven_conjectures: list[str], comp_to_raw_dict: dict[str, str], permanent_deriv, seed_used: dict[str,str], theory: str, premises: list[str], instruction_queue: mp.Queue, output_queue: mp.Queue) -> list[str]:
     progress_bar = tqdm(total=cfg.n_conjectures)
     conjectures: list[str] = []
     failures = 0
     dups = 0
     for j in range(min(cfg.num_processes, cfg.n_conjectures)):
         instruction_queue.put(MPInstruction(instruction=InstructionEnum.CONJECTURE, 
+                                            agent_file=agent_file, 
                                             seed=get_seed_statement(cfg, proven_conjectures, comp_to_raw_dict), 
                                             theory=(theory, premises), 
                                             previous_conjectures=proven_conjectures))
@@ -155,6 +152,7 @@ def batch_conjecture (cfg, proven_conjectures: list[str], comp_to_raw_dict: dict
         conjecture_result = MPResult.model_validate(output_queue.get())
         # assert type(conjecture_result.result) is str
         instruction_queue.put(MPInstruction(instruction=InstructionEnum.CONJECTURE, 
+                                            agent_file=agent_file,
                                             seed=get_seed_statement(cfg, proven_conjectures, comp_to_raw_dict), 
                                             theory=(theory, premises), 
                                             previous_conjectures=conjectures + proven_conjectures))
@@ -170,19 +168,6 @@ def batch_conjecture (cfg, proven_conjectures: list[str], comp_to_raw_dict: dict
 
                 conjectures.append(contracted_proposal)
                 progress_bar.update(1)
-        #     else:
-        #         dups += 1
-        #         if dups % 10 == 0:
-        #             print (f"Current dup count: {dups}")
-        # else:
-        #     if conjecture_result.result:
-        #         dups += 1
-        #         if dups % 10 == 0:
-        #             print (f"Current dup count: {dups}")
-        #     else:
-        #         failures += 1
-        #         if failures % 10 == 0:
-        #             print (f"Current fail count: {failures}")
             
     progress_bar.close()
     return conjectures
@@ -242,7 +227,7 @@ def teacher_loop(cfg: DictConfig):
 
     continue_dir = cfg.get('continue')
     start_iteration = 0
-
+    
     if continue_dir is not None:
         os.makedirs(continue_dir, exist_ok=True)
         os.chdir(continue_dir)
@@ -296,11 +281,9 @@ def teacher_loop(cfg: DictConfig):
         output_queue: mp.Queue = mp.Queue()
         processes: list[mp.Process] = []
 
-        agent.share_memory()
         for j in range(num_processes):
             new_process = mp.Process(target=process_main,kwargs={"id": j,
                                                                  "cfg": cfg,
-                                                                 "agent":agent, 
                                                                  "instruction_queue": instruction_queue, 
                                                                  "output_queue": output_queue})
             new_process.start()
@@ -332,7 +315,7 @@ def teacher_loop(cfg: DictConfig):
             # 1- Run conjecturing model to obtain N conjectures.
             print(now(), f'Iteration #{i}: making conjectures...')
             if cfg.use_multiprocessing:
-                conjectures = batch_conjecture(cfg, proven_conjectures, comp_to_raw_dict, permanent_deriv, seed_used, theory, premises, instruction_queue, output_queue) # type: ignore
+                conjectures = batch_conjecture(cfg, f'{i}.pt', proven_conjectures, comp_to_raw_dict, permanent_deriv, seed_used, theory, premises, instruction_queue, output_queue) # type: ignore
             else:
                 conjectures: list[str] = []
                 progress_bar = tqdm(total=cfg.n_conjectures)
@@ -366,10 +349,10 @@ def teacher_loop(cfg: DictConfig):
 
             print('Running proof search...')
             if cfg.use_multiprocessing:
-                student_results = batch_prove(cfg, conjectures, theory, premises, instruction_queue, output_queue) # type: ignore # type: ignore
+                student_results = batch_prove(cfg, f'{i}.pt', conjectures, theory, premises, instruction_queue, output_queue) # type: ignore # type: ignore
             else:
                 for index, conjecture in enumerate(tqdm(conjectures, miniters=1)):
-                    student_results.append(worker.try_prove(cfg, agent, background_theory, conjecture, True))
+                    student_results.append(worker.try_prove(cfg, agent, background_theory, conjecture, False))
             end_search_time = time.time()
 
             # 3a- Look at all the success logprobs and compute the easy/hard threhsold.
@@ -445,6 +428,7 @@ def teacher_loop(cfg: DictConfig):
             print (len(hard_theorems), len(useful_theorems))
             if len(useful_theorems) > 0:
                 print ("Beginning usefulness check")
+                # breakpoint()
                 if cfg.max_proof_expansion < 0:
                     theorems_to_check = random.sample(useful_theorems, int(math.sqrt(len(useful_theorems))))
                 else:
@@ -454,7 +438,7 @@ def teacher_loop(cfg: DictConfig):
                 hard_problems = [ht.problem for ht in hard_theorems]
                 res = []
                 if cfg.use_multiprocessing:
-                    res = batch_prove(cfg, hard_problems, new_theory, new_premises, instruction_queue, output_queue) # type: ignore
+                    res = batch_prove(cfg, f'{i}.pt', hard_problems, new_theory, new_premises, instruction_queue, output_queue) # type: ignore
                 else:
                     bk = worker.BackgroundTheory(new_theory, new_premises)
                     for hard_theorem in tqdm(hard_theorems):
@@ -546,7 +530,7 @@ def teacher_loop(cfg: DictConfig):
         final_outcomes: list[ProofOutcome] = []
         to_prove_again = [o.problem for o in outcomes if not o.hindsight]
         if cfg.use_multiprocessing:
-            res = batch_prove(cfg, to_prove_again, theory, premises, instruction_queue, output_queue)
+            res = batch_prove(cfg, f'{cfg.iterations-1}.pt', to_prove_again, theory, premises, instruction_queue, output_queue)
         else:
             res = []
             background_theory = worker.BackgroundTheory(theory, premises)

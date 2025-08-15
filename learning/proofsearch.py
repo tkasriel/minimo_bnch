@@ -859,25 +859,26 @@ class MonteCarloTreeSearch(Policy):
         return self.evaluate(cfg, root, on_expand=on_expand, verbose=verbose)
 
     def evaluate(self, cfg, root: TreeSearchNode, start_index=0,
-                 on_expand=None, verbose=True) -> np.array:
+                 on_expand=None, verbose=False) -> np.array:
         # breakpoint()
         st_time = time.time()
         for i in range(self._budget):
             if root.is_solved():
                 break
-            if time.time() - st_time > 60:
-                breakpoint()
+            # if time.time() - st_time > 60:
+            #     breakpoint()
+            #     print ("Help.1")
+            #     verbose=True
             
             leaf = self._tree_policy(root)
-            # line1 = time.time()
-            # print (f"Line 1: {line1 - st_time}")
+            if verbose:
+                line1 = time.time()
+                print (f"Line 1: {line1 - st_time}")
 
             if leaf is None:
                 # Ended up visiting a node where all children were dead,
                 # so forcefully would end up in a dead node. The parent
                 # is marked as dead so this won't repeat in the same branch.
-                if time.time() - st_time > 60:
-                    breakpoint()
                 continue
 
             leaf._index = start_index + i
@@ -885,37 +886,42 @@ class MonteCarloTreeSearch(Policy):
             if leaf.is_terminal():
                 leaf.mark_solved()
                 self._backpropagate_reward(leaf, 1)
-                if time.time() - st_time > 60:
-                    breakpoint()
                 continue
+            if verbose:
+                line2 = time.time()
+                print (f"Line 2: {line2-line1}")
 
             leaf.expand(cfg)
-            if time.time() - st_time > 60:
-                breakpoint()
+
+            if verbose:
+                line3 = time.time()
+                print (f"Line 3: {line3-line2}")
 
             if self._use_default_policy and self._default_policy:
                 self._default_policy.initialize(cfg, leaf)
-            if time.time() - st_time > 60:
-                breakpoint()
 
+            if verbose:
+                line4 = time.time()
+                print (f"Line 4: {line4-line3}")
 
             if on_expand is not None:
                 path = leaf.get_path_from_root()
                 on_expand([str(a) for a in path])
-            if time.time() - st_time > 60:
-                breakpoint()
+            
+            if verbose:
+                line5 = time.time()
+                print (f"Line 5: {line5-line4}")
 
             _, reward = self._default_policy.evaluate(cfg, leaf)
-            if time.time() - st_time > 60:
-                breakpoint()
+
+            if verbose:
+                line6 = time.time()
+                print (f"Line 6: {line6-line5}")
 
             self._backpropagate_reward(leaf, reward)
-            if time.time() - st_time > 60:
-                breakpoint()
-
-            if time.time() - st_time > 60:
-                breakpoint()
-                print('')
+            if verbose:
+                line7 = time.time()
+                print (f"Line 7: {line7-line6}")
 
         pi = self._policy(root)
         value = max(p * (c._reward / max(1, c._visits))
@@ -925,7 +931,7 @@ class MonteCarloTreeSearch(Policy):
 
     def _tree_policy(self, node):
         prefix = list(self._exploration_prefix or [])
-
+        st_time = time.time()
         while not (node.is_leaf() or node.is_terminal()):
             prefix_action = self._next_action_from_prefix(node, prefix)
             a = prefix_action if prefix_action is not None else self._uct(node)
@@ -934,6 +940,9 @@ class MonteCarloTreeSearch(Policy):
                 return None
 
             node = node.children()[a]
+            if time.time() - st_time > 30:
+                breakpoint()
+                print ("HELP")
 
         return node
 
