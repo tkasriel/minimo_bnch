@@ -80,22 +80,16 @@ def process_main(id: int, cfg, instruction_queue: mp.Queue, output_queue: mp.Que
         elif instruction.instruction == InstructionEnum.PROOF:
             assert instruction.thm_to_prove
             assert type(background_theory) is worker.BackgroundTheory
-            # st_time = time.time()
-            # profiler.enable()
+            st_time = time.time()
+            profiler.enable()
             result = worker.try_prove(cfg, agent, background_theory, instruction.thm_to_prove, verbose=False)
-            # tr.print_diff()
-            # breakpoint()
-            # profiler.disable()
-            # end_time = time.time()
-            # if end_time - st_time > 300: # check what's going on with the longer proofs
-            #     all_objs = muppy.get_objects()
-            #     summ = summary.summarize(all_objs)
-            #     summary.print_(summ)
-            #     # breakpoint()
-            #     del all_objs, summ
-            #     if "continue" in cfg.keys():
-            #         profiler.dump_stats(os.path.join(cfg["continue"], f"profiler_res_{id}.txt"))
-            #     profiler.dump_stats(f"profiler_res_{id}.txt")
+            profiler.disable()
+            end_time = time.time()
+            if end_time - st_time > 300: # check what's going on with the longer proofs
+                if "continue" in cfg.keys():
+                    profiler.dump_stats(os.path.join(cfg["continue"], f"profiler_res_{id}.txt"))
+                else:
+                    profiler.dump_stats(f"profiler_res_{id}.txt")
             output_queue.put(MPResult(instruction=InstructionEnum.PROOF, result=result, time_taken=time.time()-start_time))
         # print (f"Curr memory : {process.memory_info()[0] / float(2 ** 20)}")
     output_queue.put(MPResult(instruction=InstructionEnum.STOP, result=id, time_taken=0.0))
