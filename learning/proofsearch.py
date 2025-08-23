@@ -904,7 +904,7 @@ class MonteCarloTreeSearch(Policy):
             if end_time - st_time > 500:
                 with open("long_proof_times.txt", 'a+') as f:
                     f.write(str(end_time-st_time) + "\n")
-                return False, 0.0, 0.0, 0
+                return False, 0.0, 0.0, -1
 
         pi = self._policy(root)
         value = max(p * (c._reward / max(1, c._visits))
@@ -1052,6 +1052,8 @@ class ProofSearchAgent:
 
             mcts = MonteCarloTreeSearch(self._policy, self._max_mcts_nodes, use_policy=True)
             solved, pi, _, it = mcts.evaluate(cfg, node, verbose=verbose)
+            if it < 0:
+                break
             
 
             if solved:
