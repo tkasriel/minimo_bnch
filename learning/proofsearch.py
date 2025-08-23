@@ -887,41 +887,24 @@ class MonteCarloTreeSearch(Policy):
                 leaf.mark_solved()
                 self._backpropagate_reward(leaf, 1)
                 continue
-            if verbose:
-                line2 = time.time()
-                print (f"Line 2: {line2-line1}")
 
             leaf.expand(cfg)
-
-            if verbose:
-                line3 = time.time()
-                print (f"Line 3: {line3-line2}")
 
             if self._use_default_policy and self._default_policy:
                 self._default_policy.initialize(cfg, leaf)
 
-            if verbose:
-                line4 = time.time()
-                print (f"Line 4: {line4-line3}")
-
             if on_expand is not None:
                 path = leaf.get_path_from_root()
                 on_expand([str(a) for a in path])
-            
-            if verbose:
-                line5 = time.time()
-                print (f"Line 5: {line5-line4}")
 
             _, reward = self._default_policy.evaluate(cfg, leaf)
 
-            if verbose:
-                line6 = time.time()
-                print (f"Line 6: {line6-line5}")
-
             self._backpropagate_reward(leaf, reward)
-            if verbose:
-                line7 = time.time()
-                print (f"Line 7: {line7-line6}")
+            end_time = time.time()
+            if end_time - st_time > 500:
+                with open("long_proof_times.txt", 'a+') as f:
+                    f.write(str(end_time-st_time) + "\n")
+                return False, 0.0, 0.0, 0
 
         pi = self._policy(root)
         value = max(p * (c._reward / max(1, c._visits))

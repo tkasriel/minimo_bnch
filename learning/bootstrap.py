@@ -443,8 +443,10 @@ def teacher_loop(cfg: DictConfig):
                     bk = worker.BackgroundTheory(new_theory, new_premises)
                     for hard_theorem in tqdm(hard_theorems):
                         res.append(worker.try_prove(cfg, agent, bk, hard_theorem.problem))
+                success_count = 0
                 for proof_res, hard_theorem in zip(res, hard_theorems):
                     if proof_res.proof:
+                        success_count +=1 
                         usefulness_outcomes.append({
                             "iteration": i,
                             "problem": convert_arith(hard_theorem.problem, 0, False),
@@ -511,6 +513,10 @@ def teacher_loop(cfg: DictConfig):
                 tm.write(f"Conjecturing took {end_conjecture_time-start_time}s\n")
                 tm.write(f"Proof search took {end_search_time-end_conjecture_time}s\n")
                 tm.write(f"Usefulness check took {end_usefulness_time-end_search_time}s\n")
+                try:
+                    tm.write(f"Total successful usefulness checks: {success_count} / {len(hard_problems)}")
+                except Exception:
+                    pass
                 tm.write(f"Training took {train_end_time-end_usefulness_time}s\n")
                 tm.write(f"Total time taken: {train_end_time-start_time}s\n")
 
