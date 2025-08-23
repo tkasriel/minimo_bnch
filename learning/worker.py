@@ -72,17 +72,15 @@ def try_prove(cfg, agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory
         # Policy examples for the proved goal.
         examples.extend(agent._policy.extract_examples(root=agent_result.root))
         # Hindsight examples (policy + conjecturing).
-        hindsight_examples = hindsight.extract_hindsight_examples(
-                cfg,
-                agent_result.root,
-                theory.theory,
-                theory.premises,
-                agent._policy)
-        # print(f"worker, curr allocated (pre-del): {torch.cuda.memory_allocated()}")
-        # print(f"worker, curr allocated (post-del): {torch.cuda.memory_allocated()}")
-        #print(f"Got {len(hindsight_examples)} examples")
-        #print(f"Extracting examples took {time.time()-curr_time:02.1f}s")
-        # curr_time = time.time()
+        try:
+            hindsight_examples = hindsight.extract_hindsight_examples(
+                    cfg,
+                    agent_result.root,
+                    theory.theory,
+                    theory.premises,
+                    agent._policy)
+        except:
+            hindsight_examples = []
 
 
         return StudentResult(

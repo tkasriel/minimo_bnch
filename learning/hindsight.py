@@ -26,7 +26,7 @@ def extract_hindsight_examples(cfg,root,
                                theory: str,
                                premises: list[str],
                                pi: proofsearch.Policy,
-                               max_goals: int = 50) -> list[dict]:
+                               max_goals: int = 50) -> list[HindsightExample]:
     # 1- Find distinct goals - map goal to terminal node
     goals_to_node = find_distinct_goals(root)
     # Sample goals
