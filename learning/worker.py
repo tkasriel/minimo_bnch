@@ -53,7 +53,6 @@ def try_prove(cfg, agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory
                                theory.premises,
                                statement)
 
-    #print(f"Instantiating peano state took {time.time()-curr_time:02.1f}s")
     try:
         # start_proof_time = time.time()
         agent_result = agent.proof_search(cfg, statement, state, verbose)

@@ -22,6 +22,7 @@ max_proof_expansion: -1 # -1 for no max
 metric_use_useage: False
 increase_variable_conjecturing: False
 prove_all_at_end: False
+deterministic: True
 
 
 difficulty_buckets:

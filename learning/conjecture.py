@@ -370,7 +370,7 @@ def pretty_print_conjecture(conjecture: str) -> str:
 
 MAX_OPEN_PARENS = 8
 
-def sample_conjecture(cfg, lm, context, previous_conjectures: list[str], seed = None, max_it=100):
+def sample_conjecture(cfg, lm: "AgentLM", context, previous_conjectures: list[str], seed = None, max_it=100):
     generation = ''
 
     def has_trivial_outcome(conjecture):
@@ -453,7 +453,7 @@ def sample_conjecture(cfg, lm, context, previous_conjectures: list[str], seed = 
                 break
 
             # Sample the next character using the LM.
-            choices = list(set(c[0] for c in completions))
+            choices = sorted(list(set(c[0] for c in completions)))
             scores = list(map(math.exp, lm.score(choices, mean=False, prefix=generation)))
             
             # Favor novel directions
@@ -576,7 +576,7 @@ class AgentLM:
         self._agent = agent
         self._prompt = prompt
 
-    @batch_inference(10000)
+    @batch_inference(10000) #det conf
     def score(self, candidates, mean=True, prefix=''):
         return list(self._agent._policy._lm.completion_logprob(
             [self._prompt + prefix] * len(candidates),

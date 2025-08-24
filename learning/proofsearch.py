@@ -865,15 +865,8 @@ class MonteCarloTreeSearch(Policy):
         for i in range(self._budget):
             if root.is_solved():
                 break
-            # if time.time() - st_time > 60:
-            #     breakpoint()
-            #     print ("Help.1")
-            #     verbose=True
-            
+            # print (f"Iteration: {i}")
             leaf = self._tree_policy(root)
-            if verbose:
-                line1 = time.time()
-                print (f"Line 1: {line1 - st_time}")
 
             if leaf is None:
                 # Ended up visiting a node where all children were dead,

@@ -29,6 +29,11 @@ from conjecture import AgentLM, Context, sample_conjecture
 from proofsearch import ProofSearchAgent, make_agent
 import re
 import cProfile
+from transformers.trainer_utils import set_seed
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 def now() -> str:
     return '[' + datetime.datetime.now().isoformat() + ']'
@@ -49,8 +54,18 @@ def process_main(id: int, cfg, instruction_queue: mp.Queue, output_queue: mp.Que
     context = None
     print(f"Process {id} ready")
     sys.stdin = open(0)
+    if cfg.deterministic:
+        random.seed(8)
+        torch.manual_seed(8)
+        set_seed(8)
+        np.random.seed(8)
+        torch.use_deterministic_algorithms(True)
+        torch.backends.cudnn.benchmark = False
+        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
 
     while not instruction or instruction.instruction != InstructionEnum.STOP:
+        
+        
         instruction = MPInstruction.model_validate(instruction_queue.get())
         profiler = cProfile.Profile()
         
@@ -80,8 +95,6 @@ def process_main(id: int, cfg, instruction_queue: mp.Queue, output_queue: mp.Que
         elif instruction.instruction == InstructionEnum.PROOF:
             assert instruction.thm_to_prove
             assert type(background_theory) is worker.BackgroundTheory
-            # st_time = time.time()
-            # profiler.enable()
             result = worker.try_prove(cfg, agent, background_theory, instruction.thm_to_prove, verbose=False)
             # tr.print_diff()
             # breakpoint()
@@ -197,6 +210,14 @@ def extract_examples(cfg, difficulty_buckets, permanent_deriv, seen_hindsight_go
 def teacher_loop(cfg: DictConfig):
     if cfg.use_multiprocessing:
         mp.set_start_method(cfg.mp_start_method)
+    if cfg.deterministic:
+        random.seed(8)
+        torch.manual_seed(8)
+        set_seed(8)
+        np.random.seed(8)
+        torch.use_deterministic_algorithms(True)
+        torch.backends.cudnn.benchmark = False
+        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
 
     agent = make_agent(cfg)
 
@@ -289,17 +310,7 @@ def teacher_loop(cfg: DictConfig):
             new_process.start()
             processes.append(new_process)
 
-    # conjectures_test = ["[('a0 : nat) -> ('a1 : (= o 'a0)) -> (= (s z) 'a0)]",
-    #                     "[('a0 : nat) -> ('a1 : (= 'a0 z)) -> (= z 'a0)]"]
-                        # "[('a0 : nat) -> ('a1 : (= z (+ z o))) -> (= (+ z o) (* (* (s 'a0) (s 'a0)) z))]",
-                        # "[('a0 : (= z o)) -> ('a1 : nat) -> ('a2 : (= o 'a1)) -> ('a3 : nat) -> ('a4 : (= (s z) o)) -> (= o 'a1)]",
-    
-    # for i in range(10):
-    #     thms = random.sample(useful_theorems, k=10)
-    #     new_theory = theory + "\n\n" + "\n\n".join(map(lambda x: x.theorem, thms))
-    #     new_premises = premises + [thm.theorem.split(" : ")[0] for thm in thms]
-    #     batch_prove(cfg, conjectures_test, new_theory, new_premises, instruction_queue, output_queue)
-    # return
+
     with open('log.jsonl', 'w') as log:
         for i in range(start_iteration, cfg.iterations):
             start_time = time.time()
@@ -352,7 +363,7 @@ def teacher_loop(cfg: DictConfig):
                 student_results = batch_prove(cfg, f'{i}.pt', conjectures, theory, premises, instruction_queue, output_queue) # type: ignore # type: ignore
             else:
                 for index, conjecture in enumerate(tqdm(conjectures, miniters=1)):
-                    student_results.append(worker.try_prove(cfg, agent, background_theory, conjecture, False))
+                    student_results.append(worker.try_prove(cfg, agent, background_theory, conjecture, True))
             end_search_time = time.time()
 
             # 3a- Look at all the success logprobs and compute the easy/hard threhsold.

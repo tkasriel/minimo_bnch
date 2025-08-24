@@ -52,9 +52,9 @@ class TransformerLMPolicy(nn.Module):
                 pad_token_id=PAD,
                 n_positions=512)
             device = torch.device('cpu')
-
         self._lm = transformers.GPT2LMHeadModel(cfg).to(device)
         self._optimizer = torch.optim.AdamW(self._lm.parameters(), lr=config.get('lr', 1e-4))
+        self._lm.eval()
 
     def get_loss(self, strs):
         _, input_ids = self._strs_to_token_ids(strs, True)
@@ -112,6 +112,8 @@ class TransformerLMPolicy(nn.Module):
         sa_queries = [self.format_state_action_query(state, a) for a in actions]
         all_queries = st_queries + sa_queries
         ans = self._estimate_query_values(all_queries)
+        ans2 = self._estimate_query_values(all_queries)
+        assert np.allclose(ans, ans2)
         st_ans = ans[:len(st_queries)]
         sa_ans = ans[len(st_queries):]
         return st_ans, sa_ans
