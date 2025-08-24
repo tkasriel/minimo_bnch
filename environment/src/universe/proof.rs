@@ -12,6 +12,9 @@ use pest::Parser;
 use pest::iterators::Pair;
 use pest::error::{Error as PestError};
 
+use std::time::Duration;
+use std::time::Instant;
+
 
 #[derive(Clone, Debug)]
 pub struct Proof {
@@ -659,8 +662,11 @@ impl ProofState {
                         Some(Annotation::ForwardAction { arrow: _, preconditions }) => preconditions,
                         _ => vec![],
                     };
-
+                    let st_time = std::time::Instant::now();
                     let mut defs = self.derivation.application_results_with_preconditions(&arrow, &None, &preconditions, &vec![]);
+                    if defs.len() == 0 {
+                        return vec![]
+                    }
                     defs.drain(0..).filter_map(|d| {
                         if !self.derivation.is_redundant(&d.dtype, &d.value) {
                             Some(ProofAction::SelectConstruction(

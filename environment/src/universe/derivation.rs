@@ -13,6 +13,13 @@ use super::universe::{Scope};
 use super::term::{Context, Term, Definition, is_parameter_name, is_intrinsic_application, ProofResultNames, Unifier};
 use super::proof::{Proof, ProofError};
 
+use std::sync::LazyLock;
+use std::sync::Mutex;
+use std::time::Instant;
+
+
+static EXPANSION_COUNT: LazyLock<Mutex<i32>> = LazyLock::new(|| Mutex::new(0));
+const MAX_EXPANSION: i32 = 100000;
 const REAL_TYPE_CONST: &str = &"real";
 const PATH_EXPR_SEPARATOR: &str = "@";
 const LOCAL_DEFINITION_PREFIX: &str = &"!tac"; // Terms that are local to a tactic.
@@ -208,9 +215,13 @@ impl Derivation {
                                         substitutions: &mut HashMap<String, String>,
                                         ghost_arguments: usize,
                                         scope: &Option<Scope>,
-                                        results: &mut Vec<(Arc<Term>, Arc<Term>)>) {
+                                        results: &mut Vec<(Arc<Term>, Arc<Term>)>,
+                                        expansion: &mut i32) -> bool { // temporary fix for slow iterations
         let next = inputs.len();
-
+        *expansion += 1;
+        if *expansion > MAX_EXPANSION {
+            return false;
+        }
         // If we have filled up all arguments.
         if next == input_types.len() {
             results.push((
@@ -219,7 +230,7 @@ impl Derivation {
                     arguments: inputs[ghost_arguments..].to_vec(),
                 }.rc(),
                 output_type.eval(&self.context_)));
-            return;
+            return true;
         }
 
         // Otherwise, we pick the next argument.
@@ -286,10 +297,12 @@ impl Derivation {
 
                 inputs.push(val_name);
 
-                self.nondeterministically_apply_arrow(
+                let ok = self.nondeterministically_apply_arrow(
                     arrow_object, &remaining_types, &output_type, inputs, predetermined,
-                    substitutions, ghost_arguments, scope, results);
-
+                    substitutions, ghost_arguments, scope, results, expansion);
+                if !ok {
+                    return false;
+                }
                 for (name, _value) in unifier.iter() {
                     substitutions.remove(name);
                 }
@@ -297,6 +310,7 @@ impl Derivation {
                 inputs.pop();
             }
         }
+        true
     }
 
     pub fn apply_with(&self, action: &String, param_name: &String) -> Vec<Definition> {
@@ -348,6 +362,7 @@ impl Derivation {
                             }
 
                             let mut results = Vec::new();
+                            let mut expansion = 0;
                             self.nondeterministically_apply_arrow(
                                 &Arc::new(Term::Atom { name: action.clone() }),
                                 input_types,
@@ -357,7 +372,8 @@ impl Derivation {
                                 &mut HashMap::new(),
                                 0,
                                 &None,
-                                &mut results
+                                &mut results,
+                                &mut expansion
                             );
 
                             for (r, t) in results.into_iter() {
@@ -703,8 +719,13 @@ impl Derivation {
 
                     // Augment input types with new PatternDeclarations corresponding to the preconditions.
                     let augmented_input_types = preconditions.iter().chain(input_types).cloned().collect();
-
-                    self.nondeterministically_apply_arrow(
+                    // {
+                    //     let mut fc = EXPANSION_COUNT.lock().unwrap();
+                    //     *fc = 0
+                    // }
+                    let mut expansion = 0;
+                    // let st_time = Instant::now();
+                    let ok = self.nondeterministically_apply_arrow(
                         &Arc::new(Term::Atom { name: action.clone() }),
                         &augmented_input_types,
                         output_type,
@@ -714,8 +735,15 @@ impl Derivation {
                         preconditions.len(),
                         scope,
                         &mut results,
+                        &mut expansion
                     );
-
+                    // if !ok {
+                    //     println! ("Calling actions() failed");
+                    //     println! ("Took {:?}", st_time.elapsed());
+                    // }
+                    // else {
+                    //     println! ("Calling actions() succeeded")
+                    // }
                     for (r, t) in results.into_iter() {
                         new_terms.push(Definition { dtype: t,
                                                     value: Some(r), location: None });
