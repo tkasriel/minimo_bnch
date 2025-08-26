@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import random
+import time
 
 from omegaconf import DictConfig
 
@@ -75,9 +76,12 @@ def extract_hindsight_examples(cfg,root,
             # Run MCTS until success. This should be fast and typically only take
             # one iteration, since we're using the optimal policy. It only takes
             # more iterations because MCTS will force some exploration.
+            st_time = time.time()
             for _ in range(10):
                 success, _, _, _ = mcts.evaluate(cfg, mcts_root, verbose=False)
                 if success:
+                    break
+                if time.time() - st_time > 300:
                     break
 
             assert success, 'Hindsight MCTS failed'
