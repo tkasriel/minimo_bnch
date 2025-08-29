@@ -45,7 +45,7 @@ app.conf.worker_max_memory_per_child = 1e9
 app.conf.accept_content = ['application/json', 'application/x-python-serialize']
 
 
-def try_prove(cfg, agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, statement: str, verbose: bool = False) -> StudentResult:
+def try_prove(cfg, agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, statement: str, extract_hindsight: bool = True, verbose: bool = False) -> StudentResult:
     # print(f"worker, curr allocated (init): {torch.cuda.memory_allocated()}")
 
     # print('Proving', statement[0], 'on', agent._policy._lm._lm.device)
@@ -71,15 +71,17 @@ def try_prove(cfg, agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory
         # Policy examples for the proved goal.
         examples.extend(agent._policy.extract_examples(root=agent_result.root))
         # Hindsight examples (policy + conjecturing).
-        try:
-            hindsight_examples = hindsight.extract_hindsight_examples(
-                    cfg,
-                    agent_result.root,
-                    theory.theory,
-                    theory.premises,
-                    agent._policy)
-        except:
-            hindsight_examples = []
+        hindsight_examples = []
+        if extract_hindsight:
+            try:
+                hindsight_examples = hindsight.extract_hindsight_examples(
+                        cfg,
+                        agent_result.root,
+                        theory.theory,
+                        theory.premises,
+                        agent._policy)
+            except:
+                pass
 
 
         return StudentResult(

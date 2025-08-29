@@ -17,6 +17,7 @@ class MPInstruction (BaseModel):
     thm_to_prove: str | None = None
     theory: tuple[str, list[str]]
     previous_conjectures: list[str] | None = None
+    extract_hindsight : bool | None = None
 
 class MPResult (BaseModel):
     instruction: InstructionEnum

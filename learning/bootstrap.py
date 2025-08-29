@@ -55,10 +55,10 @@ def process_main(id: int, cfg, instruction_queue: mp.Queue, output_queue: mp.Que
     print(f"Process {id} ready")
     sys.stdin = open(0)
     if cfg.deterministic:
-        random.seed(8)
-        torch.manual_seed(8)
-        set_seed(8)
-        np.random.seed(8)
+        random.seed(id)
+        torch.manual_seed(id)
+        set_seed(id)
+        np.random.seed(id)
         torch.use_deterministic_algorithms(True)
         torch.backends.cudnn.benchmark = False
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
@@ -67,7 +67,7 @@ def process_main(id: int, cfg, instruction_queue: mp.Queue, output_queue: mp.Que
         
         
         instruction = MPInstruction.model_validate(instruction_queue.get())
-        profiler = cProfile.Profile()
+        # profiler = cProfile.Profile()
         
         # Import new theory if needed
         if instruction.theory[0] != current_theory:
@@ -89,16 +89,21 @@ def process_main(id: int, cfg, instruction_queue: mp.Queue, output_queue: mp.Que
             assert type(instruction.previous_conjectures) is list
             seed_statement = instruction.seed
             previous_conjectures: list[str] = instruction.previous_conjectures
+            # profiler.enable()
             new_conj = sample_conjecture(cfg, AgentLM(agent, CONJECTURE_PROMPT), context, previous_conjectures, seed=seed_statement)
+            # profiler.disable()
+            # profiler.dump_stats(f"profiler_conj_res_{id}.dmp")
             output_queue.put(MPResult(instruction=InstructionEnum.CONJECTURE, result=new_conj, seed=seed_statement, time_taken=time.time()-start_time))
         
         elif instruction.instruction == InstructionEnum.PROOF:
             assert instruction.thm_to_prove
             assert type(background_theory) is worker.BackgroundTheory
-            result = worker.try_prove(cfg, agent, background_theory, instruction.thm_to_prove, verbose=False)
+            # profiler.enable()
+            # result = worker.try_prove(cfg, agent, background_theory, instruction.thm_to_prove, extract_hindsight=instruction.extract_hindsight or False, verbose=False)
             # tr.print_diff()
             # breakpoint()
             # profiler.disable()
+            # profiler.dump_stats(f"profiler_proof_res_{id}.dmp")
             # end_time = time.time()
             # if end_time - st_time > 300: # check what's going on with the longer proofs
             #     all_objs = muppy.get_objects()
@@ -113,9 +118,9 @@ def process_main(id: int, cfg, instruction_queue: mp.Queue, output_queue: mp.Que
         # print (f"Curr memory : {process.memory_info()[0] / float(2 ** 20)}")
     output_queue.put(MPResult(instruction=InstructionEnum.STOP, result=id, time_taken=0.0))
 
-def batch_prove (cfg, agent_file: str, conjectures: list[str], theory: str, premises: list[str], instruction_queue : mp.Queue, output_queue: mp.Queue) -> list[StudentResult]:
+def batch_prove (cfg, agent_file: str, conjectures: list[str], theory: str, premises: list[str], instruction_queue : mp.Queue, output_queue: mp.Queue, extract_hindsight: bool = True) -> list[StudentResult]:
     for conjecture in conjectures:
-        instruction_queue.put(MPInstruction(instruction=InstructionEnum.PROOF, agent_file=agent_file, thm_to_prove=conjecture, theory=(theory, premises)))
+        instruction_queue.put(MPInstruction(instruction=InstructionEnum.PROOF, agent_file=agent_file, thm_to_prove=conjecture, theory=(theory, premises), extract_hindsight=extract_hindsight))
     
     # Process results
     num_dead = 0
@@ -547,7 +552,7 @@ def teacher_loop(cfg: DictConfig):
         final_outcomes: list[ProofOutcome] = []
         to_prove_again = [o.problem for o in outcomes if not o.hindsight]
         if cfg.use_multiprocessing:
-            res = batch_prove(cfg, f'{cfg.iterations-1}.pt', to_prove_again, theory, premises, instruction_queue, output_queue)
+            res = batch_prove(cfg, f'{cfg.iterations-1}.pt', to_prove_again, theory, premises, instruction_queue, output_queue, extract_hindsight=False)
         else:
             res = []
             background_theory = worker.BackgroundTheory(theory, premises)
