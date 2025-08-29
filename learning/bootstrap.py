@@ -99,7 +99,7 @@ def process_main(id: int, cfg, instruction_queue: mp.Queue, output_queue: mp.Que
             assert instruction.thm_to_prove
             assert type(background_theory) is worker.BackgroundTheory
             # profiler.enable()
-            # result = worker.try_prove(cfg, agent, background_theory, instruction.thm_to_prove, extract_hindsight=instruction.extract_hindsight or False, verbose=False)
+            result = worker.try_prove(cfg, agent, background_theory, instruction.thm_to_prove, extract_hindsight=instruction.extract_hindsight or False, verbose=False)
             # tr.print_diff()
             # breakpoint()
             # profiler.disable()
