@@ -23,13 +23,15 @@ MODEL = "gpt-4.1"
 class Theorem(BaseModel):
     thm_string: str
     iteration: int
+    proven: bool
     logprob: float
     thm_string_simple: str
+    thm_org: str | None = None
     explanation: str = ""
     def __str__(self) -> str:
         return f"{self.thm_string} (iteration {self.iteration}) : {self.logprob}"
 
-def _extract_theorems_from_outcomes(outcomes_filepath: str, logprobs: bool = False, include_hindsight: bool = False, include_unproven: bool = False) -> list[Theorem]:
+def _extract_theorems_from_outcomes(outcomes_filepath: str, include_hindsight: bool = False, include_unproven: bool = False) -> list[Theorem]:
     with open(outcomes_filepath) as f:
         outcomes = json.load(f)
     results = []
@@ -40,7 +42,7 @@ def _extract_theorems_from_outcomes(outcomes_filepath: str, logprobs: bool = Fal
             continue
         if "problem_translated" not in o.keys():
             # Old non-translated problems, pre-dsprover
-            o["problem_translated"] = convert_arith(o["problem"], i, flag_matters=False)
+            o["problem_translated"] = convert_arith(o["problem"], i, simplify=True)
         # if i == 2815:
         #     print(o)
         #     sys.exit(0)
@@ -48,12 +50,14 @@ def _extract_theorems_from_outcomes(outcomes_filepath: str, logprobs: bool = Fal
             o["logprob"] = 1.0
         thm_str = f"theorem problem{i} : {o['problem_translated']}"
         results.append(Theorem(thm_string=thm_str,
+                                proven=bool(o["proof"]),
+                                thm_org=o["problem"],
                                 thm_string_simple=o["problem_translated"],
                                 iteration=int(o.get("iteration", -1)),
                                 logprob=float(o.get("logprob", 0.0))))
     return results
 
-def _make_prompts (theorems: list[str]) -> list[list[dict[str]]]:
+def _make_prompts (theorems: list[str]) -> list[list[dict[str, str]]]:
     prompt = """You are tasked to judge whether a given lean theorem could be considered useful for an automatic theorem prover to have among its known theorems.
 This theorem prover has only access to the following axioms and known theorems:
 ```
@@ -126,12 +130,37 @@ Think it through step by step, and then return the list of unique theorems from 
                 outs.append(ut)
     return outs, (res_theorems, res)
 
+def _extract_theorems_from_explanation_file (explanation_file: str) -> list[Theorem]:
+    out = []
+    with open (explanation_file) as f:
+        lines = ("\n".join(f.readlines())).split("============")
+    for l in lines:
+        l_org = l[:]
+        l = [line for line in l.split('\n') if line.strip()]
+        if not l:
+            continue
+        theorem_name = l[0].split(" (iteration ")[0]
+        theorem_name_simple = " : ".join(theorem_name.split(" : ")[1:])
+        try:
+            it = int((l[0].split(" (iteration ")[1])[0])
+        except: 
+            it = -1 # temp fix
+        logprob = float(l[0].split(" : ")[-1])
+
+        out.append(Theorem(thm_string=theorem_name,
+                                       thm_string_simple=theorem_name_simple,
+                                       proven=True,
+                                       iteration=it,
+                                       logprob=logprob,
+                                       explanation = "\n".join(l[1:])))
+    return out
+
 
 async def run_evaluation (outcomes_filepath: str, output_folder_path: str) -> None:
     os.makedirs(output_folder_path, exist_ok = True)
     if not os.path.exists(outcomes_filepath):
         raise FileNotFoundError(f"Cannot find outcomes file")
-    theorem_list: list[Theorem] = _extract_theorems_from_outcomes(outcomes_filepath, include_unproven=False)
+    theorem_list: list[Theorem] = _extract_theorems_from_outcomes(outcomes_filepath, include_unproven=True)
 
     prompt_list = _make_prompts([t.thm_string for t in theorem_list])
     promises: list[Awaitable] = []
@@ -163,33 +192,56 @@ async def run_evaluation (outcomes_filepath: str, output_folder_path: str) -> No
         for thm in useful_theorems:
             f.write(str(thm) + "\n" + thm.explanation + "\n ============ \n\n")
     
-    
+    tmp = useful_theorems[:]
     useful_theorems = (await _remove_dedup(useful_theorems))[0]
+    print ("RESULTS:")
+    print (f"Non-deduplicated useful theorems: {len(tmp)}/{len(results)}")
+    print (f"Useful theorems: {len(useful_theorems)}/{len(results)}")
     with open(os.path.join(output_folder_path, "useful_theorem_dedup.txt"), "w") as f:
         for thm in useful_theorems:
             f.write(str(thm) + "\n" + thm.explanation + "\n ============ \n\n")
+
+    useful_theorems = list(filter(lambda x: x.proven, useful_theorems)) # filter unproven theorems
+    with open(os.path.join(output_folder_path, "useful_theorem_dedup_proven.txt"), "w") as f:
+        for thm in useful_theorems:
+            f.write(str(thm) + "\n" + thm.explanation + "\n ============ \n\n")
     print ("RESULTS:")
-    print (f"Useful theorems: {len(useful_theorems)}/{len(results)}")
+    print (f"Useful proven theorems: {len(useful_theorems)}/{len(results)}")
 
 async def remove_dedup_fix (output_folder_path: str) -> None:
-    with open (os.path.join(output_folder_path, "useful_theorems.txt")) as f:
-        lines = ("\n".join(f.readlines())).split("============")
-    useful_theorems = []
-    for l in lines[1:]:
-        l = [line for line in l.split('\n') if line.strip()]
-        theorem_name = l[0].split(" (iteration ")[0]
-        it = int((l[0].split(" (iteration ")[1])[0])
-        logprob = float(l[0].split(" : ")[-1])
-
-        useful_theorems.append(Theorem(thm_string=theorem_name,
-                                       thm_string_simple="",
-                                       iteration=it,
-                                       logprob=logprob,
-                                       explanation = "\n".join(l[1:])))
+    useful_theorems = _extract_theorems_from_explanation_file(os.path.join(output_folder_path, "useful_theorems.txt"))
     results = await _remove_dedup(useful_theorems)
     with open (os.path.join(output_folder_path, "useful_theorems_dedup_fix.txt"), "w") as f:
         f.write(results[1][0] + "\n\n" + results[1][1])
 
+def get_reproof_values (output_folder_path: str) -> None:
+
+    # It's more difficult than it would seem as the function is non-injective. So we first need to match which theorems were originally evaluated.
+    assert os.path.exists(os.path.join(output_folder_path, "final_outcomes.json"))
+    useful_theorems = _extract_theorems_from_explanation_file(os.path.join(output_folder_path, "useful_theorem_dedup.txt"))
+    original_outcomes = _extract_theorems_from_outcomes(os.path.join(output_folder_path, "outcomes_9.json"), include_unproven=True)
+    old_proven_theorems = _extract_theorems_from_explanation_file(os.path.join(output_folder_path, "useful_theorem_dedup_proven.txt"))
+    useful_theorem_names = list(map(lambda x: x.thm_string, useful_theorems))
+    original_names = []
+    for i,thm in enumerate(original_outcomes):
+        if thm.thm_string in useful_theorem_names:
+            original_names.append(thm.thm_org)
+    
+    # So here original_names will have the peano theorems that we want to find
+
+    with open(os.path.join(output_folder_path, "final_outcomes.json")) as f:
+        proven_theorems = [o for o in json.load(f) if not o["hindsight"]]
+    intersect = []
+    count = 0 
+    for thm in proven_theorems:
+        if thm["problem"] in original_names:
+            count += 1
+            if thm["proof"]:
+                intersect.append(thm["problem_translated"])
+    print (f"Found theorems {count}/{len(useful_theorems)}") # Note: count can be larger than useful_theorems. This is because the model is allowed to conjecture the same theorem multiple times if it failed the proof.
+    print (f"Proven theorems: {len(intersect)}/{(len(useful_theorems))} ({len(intersect) - len(old_proven_theorems)} improvement)")
+    
+        
     
 
 
@@ -348,11 +400,12 @@ def count_its (filename: str) -> None:
 
 
 if __name__ == "__main__":
-    OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/line19"
+    OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/line21/"
     # count_its("/home/timothekasriel/minimo/learning/outputs/line18/useful_theorems.txt")
     # print (f"Current evaluation: {os.path.basename(OUTPUT_FOLDER)}")
+    # print(get_reproof_values(OUTPUT_FOLDER))
     asyncio.run(run_evaluation(os.path.join(OUTPUT_FOLDER, "outcomes_9.json"), OUTPUT_FOLDER))
-    asyncio.run(remove_dedup_fix(OUTPUT_FOLDER))
+    # asyncio.run(remove_dedup_fix(OUTPUT_FOLDER))
     # send_batch_evaluation("/Users/tkasriel/code/rsh/minimo/learning/outputs/orig_minimo/outcomes_arith.json", OUTPUT_FOLDER, "Original Minimo Arithmetic Evaluation")
     # list_batch_evaluations(OUTPUT_FOLDER)
     # cancel_batch("batch_68523b4c6ea081908042e6131d7bea8e")
