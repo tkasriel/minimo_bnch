@@ -1,6 +1,12 @@
+import json
+import os
+
+from matplotlib import pyplot as plt
 from conjecture import Context, App
 from peano import PyDerivation
 import re
+
+from llm_eval import get_reproof_values
 
 def test_app_parse():
     def has_trivial_outcome(conjecture):
@@ -57,9 +63,63 @@ def test_app_parse():
         else:
             print(f"Conjecture '{conjecture}' does not have a trivial outcome.")
 
+def test_reproof_improvement (old_outcomes: str, new_outcomes: str) -> list[int] :
+    key = lambda x: x["problem"]
+    with open(old_outcomes) as f:
+        old_o = sorted([o for o in json.load(f) if not o["hindsight"]], key=key)
+    with open(new_outcomes) as f:
+        new_o = sorted([o for o in json.load(f) if not o["hindsight"]], key=key)
+    old_proof_count = len([o for o in old_o if o["proof"]])
+    new_proof_count = len([o for o in new_o if o["proof"]])
+    
+    improved = 0
+    degraded = 0
+    improvement_by_it = [0 for i in range(10)]
+
+    for _ in zip(old_o, new_o):
+        old, new = _
+        assert old["problem"] == new["problem"]
+        if old["proof"] and not new["proof"]:
+            degraded += 1
+            improvement_by_it[int(old["iteration"])] -= 1
+        if new["proof"] and not old["proof"]:
+            improved += 1
+            improvement_by_it[int(old["iteration"])] += 1
+    print (f"""RESULTS:
+Original proof count: {old_proof_count}
+New proof count: {new_proof_count}
+Number of newly proven theorems: {improved}
+Number of degraded theorems (unproven by 'stronger' prover) {degraded}""")
+    return improvement_by_it
+
+def graph_improvements (exp_names: list[str], improvements_by_it: list[list[int]]):
+    from graphing import _make_graph
+    _make_graph("Reproof improvement per iteration", "improvement", exp_names, improvements_by_it, "reproof_succ.png")
+    
+
+
 
 if __name__ == "__main__":
-    test_app_parse()
+    exp_folder = "/home/timothekasriel/minimo/learning/outputs/"
+    exps = os.listdir(exp_folder)
+    exp_outs = []
+    exp_names = []
+    for exp in exps:
+        if (os.path.exists(os.path.join(exp_folder, exp, "final_outcomes.json")) and
+           os.path.exists(os.path.join(exp_folder, exp, "useful_theorem_dedup_proven.txt"))):
+            print(f"Experiment: {exp}")
+            get_reproof_values(os.path.join(exp_folder, exp))
+    #         try:
+    #             exp_outs.append(get_reproof_values(exp_folder))
+    #             exp_outs.append(test_reproof_improvement(
+    #                 os.path.join(exp_folder, exp, "outcomes_9.json"),
+    #                 os.path.join(exp_folder, exp, "final_outcomes.json")
+    #             ))
+    #             exp_names.append(exp)
+    #         except AssertionError:
+    #             print (exp)
+    # graph_improvements(exp_names, exp_outs)
+    # test_app_parse()
 
 
 # (a0: nat) -> (a1: nat) -> (a2: (= o a0)) -> ... -> (a3: (= a0 o)) -> (a4: nat) -> (= z z)

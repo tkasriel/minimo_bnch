@@ -13,7 +13,7 @@ from omegaconf import DictConfig
 from celery import Celery
 
 import peano
-import proofsearch
+from proofsearch import ProofSearchAgent
 import policy
 import hindsight
 
@@ -45,7 +45,7 @@ app.conf.worker_max_memory_per_child = 1e9
 app.conf.accept_content = ['application/json', 'application/x-python-serialize']
 
 
-def try_prove(cfg, agent: proofsearch.ProofSearchAgent, theory: BackgroundTheory, statement: str, extract_hindsight: bool = True, verbose: bool = False) -> StudentResult:
+def try_prove(cfg, agent: ProofSearchAgent, theory: BackgroundTheory, statement: str, extract_hindsight: bool = True, verbose: bool = False) -> StudentResult:
     # print(f"worker, curr allocated (init): {torch.cuda.memory_allocated()}")
 
     # print('Proving', statement[0], 'on', agent._policy._lm._lm.device)
