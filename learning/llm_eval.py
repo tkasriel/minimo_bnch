@@ -6,6 +6,7 @@ import re
 import sys
 import time
 from typing import Awaitable
+import numpy as np
 from openai import AsyncOpenAI
 import dotenv
 from pydantic import BaseModel
@@ -27,9 +28,39 @@ class Theorem(BaseModel):
     logprob: float
     thm_string_simple: str
     thm_org: str | None = None
-    explanation: str = ""
+    explanations: list[str] = []
     def __str__(self) -> str:
-        return f"{self.thm_string} (iteration {self.iteration}) : {self.logprob}"
+        return f"{self.thm_string} (iteration {self.iteration}) : {self.logprob} -- {self.thm_org or ''}\n\n" + "\n#####\n".join(self.explanations)
+    def __hash__(self) -> int:
+        return (self.thm_string + " -- " + (self.thm_org or "")).__hash__()
+
+    def __eq__(self, other: object) -> bool:
+        return self.__hash__() == other.__hash__()
+    
+class LLMUsefulnessEvalResult (BaseModel):
+    useful_theorems: set[Theorem] = set()
+    deduplicated_theorems: set[Theorem] = set()
+    proven_deduplicated: set[Theorem] = set()
+
+    def dump_to_folder (self, folder_path: str) -> None:
+        add_pre = lambda filepath : os.path.join(folder_path, filepath)
+        with open(add_pre("useful_theorems.txt"), "w") as f:
+            f.write("\n============\n\n".join(map(str, self.useful_theorems)))
+        with open(add_pre("useful_theorem_dedup.txt"), "w") as f:
+            f.write("\n============\n\n".join(map(str, self.deduplicated_theorems)))
+        with open(add_pre("useful_theorem_dedup_proven.txt"), "w") as f:
+            f.write("\n============\n\n".join(map(str, self.proven_deduplicated)))
+        
+        with open(add_pre("useful_theorems.json"), "w") as f:
+            f.write(str([x.model_dump_json() for x in self.useful_theorems]))
+        with open(add_pre("useful_theorem_dedup.json"), "w") as f:
+            f.write(str([x.model_dump_json() for x in self.deduplicated_theorems]))
+    
+    def extend (self, other: "LLMUsefulnessEvalResult") -> None:
+        self.useful_theorems.update(other.useful_theorems)
+        self.deduplicated_theorems.update(other.deduplicated_theorems)
+        self.proven_deduplicated.update(other.proven_deduplicated)
+        
 
 def _extract_theorems_from_outcomes(outcomes_filepath: str, include_hindsight: bool = False, include_unproven: bool = False) -> list[Theorem]:
     with open(outcomes_filepath) as f:
@@ -110,25 +141,24 @@ Think it through step by step, and then return the list of unique theorems from 
 """
     chat = [
         {"role": "developer", "content": "You are an expert at evaluating lean theorems"},
-        {"role": "user", "content": prompt.format('\n'.join([u.thm_string for u in useful_theorems]), "\n\n".join(['\n'.join(u.thm_string + "\n" + u.explanation) for u in useful_theorems]))}
+        {"role": "user", "content": prompt.format('\n'.join([u.thm_string for u in useful_theorems]), "\n\n".join(['\n'.join(u.thm_string + "\n" + u.explanations[0]) for u in useful_theorems]))}
     ]
     # print(chat[1]["content"][:8000])
     completion = await client.chat.completions.create(
         model=MODEL,
-        messages=chat
+        messages=chat, # type: ignore
     )
     res = completion.choices[0].message.content
-    print(res)
     assert res
     res_theorems: str = re.findall(r'(?s)```lean.*```', res)[-1]
-    outs: list[Theorem] = []
+    outs: set[Theorem] = set()
     for res_thm in res_theorems.split('\n'):
         if '```' in res_thm:
             continue
         for ut in useful_theorems:
             if res_thm == ut.thm_string:
-                outs.append(ut)
-    return outs, (res_theorems, res)
+                outs.add(ut)
+    return list(outs), (res_theorems, res)
 
 def _extract_theorems_from_explanation_file (explanation_file: str) -> list[Theorem]:
     out = []
@@ -152,61 +182,67 @@ def _extract_theorems_from_explanation_file (explanation_file: str) -> list[Theo
                                        proven=True,
                                        iteration=it,
                                        logprob=logprob,
-                                       explanation = "\n".join(l[1:])))
+                                       explanations = ["\n".join(l[1:])])) #TODO: fix
     return out
 
 
-async def run_evaluation (outcomes_filepath: str, output_folder_path: str) -> None:
+async def run_evaluation_at_k (outcomes_filepath: str, output_folder_path: str, k: int = 1) -> None:
     os.makedirs(output_folder_path, exist_ok = True)
     if not os.path.exists(outcomes_filepath):
         raise FileNotFoundError(f"Cannot find outcomes file")
     theorem_list: list[Theorem] = _extract_theorems_from_outcomes(outcomes_filepath, include_unproven=True)
-
     prompt_list = _make_prompts([t.thm_string for t in theorem_list])
-    promises: list[Awaitable] = []
+    out = LLMUsefulnessEvalResult()
 
-    print(f"Sending {len(prompt_list)} requests in 5s")
+    print(f"Sending {k * len(prompt_list)} requests in 5s")
     time.sleep(5)
     print("Sending")
-    for prompt in prompt_list:
-        completion = client.chat.completions.create(
-            model= MODEL,
-            messages=prompt # type: ignore
-        )
-        promises.append(completion)
-    print("All requests sent")
 
-    useful_theorems: list[Theorem] = []
-    results = []
-    batch_size = 100
-    for batch_i in tqdm.tqdm(range(0, len(promises), batch_size)):
-        results.extend(await tqdm_asyncio.gather(*(promises[batch_i:min(batch_i+batch_size, len(promises))])))
-    # results: list = await tqdm_asyncio.gather(*promises)
-    for theorem, completion in zip(theorem_list, results):
-        response: str = completion.choices[0].message.content
-        theorem.explanation = response
-        if "NOT" not in response.split("\n")[-1]:
-            useful_theorems.append(theorem)
-    
-    with open(os.path.join(output_folder_path, "useful_theorems.txt"), "w") as f:
-        for thm in useful_theorems:
-            f.write(str(thm) + "\n" + thm.explanation + "\n ============ \n\n")
-    
-    tmp = useful_theorems[:]
-    useful_theorems = (await _remove_dedup(useful_theorems))[0]
-    print ("RESULTS:")
-    print (f"Non-deduplicated useful theorems: {len(tmp)}/{len(results)}")
-    print (f"Useful theorems: {len(useful_theorems)}/{len(results)}")
-    with open(os.path.join(output_folder_path, "useful_theorem_dedup.txt"), "w") as f:
-        for thm in useful_theorems:
-            f.write(str(thm) + "\n" + thm.explanation + "\n ============ \n\n")
+    iteration_results = np.zeros((k, 3))
 
-    useful_theorems = list(filter(lambda x: x.proven, useful_theorems)) # filter unproven theorems
-    with open(os.path.join(output_folder_path, "useful_theorem_dedup_proven.txt"), "w") as f:
-        for thm in useful_theorems:
-            f.write(str(thm) + "\n" + thm.explanation + "\n ============ \n\n")
-    print ("RESULTS:")
-    print (f"Useful proven theorems: {len(useful_theorems)}/{len(results)}")
+    for i in range(k):
+        local_results = LLMUsefulnessEvalResult()
+        promises: list[Awaitable] = []
+
+        for prompt in prompt_list:
+            completion = client.chat.completions.create(
+                model= MODEL,
+                messages=prompt, # type: ignore
+            )
+            promises.append(completion)
+        print("All requests sent")
+
+        results = []
+        batch_size = 100
+        # send by batches of batch_size because program crashes with 2k requests at once
+        progress = tqdm.tqdm(total=len(promises))
+        for batch_i in range(0, len(promises), batch_size):
+            batch = promises[batch_i:min(batch_i+batch_size, len(promises))]
+            results.extend(await asyncio.gather(*batch))
+            progress.update(len(batch))
+        progress.close()
+    
+        for theorem, completion in zip(theorem_list, results):
+            response: str = completion.choices[0].message.content
+            theorem.explanations.append(response)
+            if "USEFUL" not in response.split("\n")[-1]:
+                continue # malformed response, rare and even rarer for this to be a false negative
+            if "NOT" not in response.split("\n")[-1]:
+                local_results.useful_theorems.add(theorem)
+        local_results.deduplicated_theorems = set((await _remove_dedup(list(local_results.useful_theorems)))[0])
+        local_results.proven_deduplicated = set(filter(lambda x : x.proven, local_results.deduplicated_theorems))
+        iteration_results[i] = [len(local_results.useful_theorems), len(local_results.deduplicated_theorems), len(local_results.proven_deduplicated)]
+        out.extend(local_results)
+    print(iteration_results)
+    exp_name = os.path.dirna(output_folder_path)
+    averages = np.average(iteration_results, 0)
+    var = np.sqrt(np.var(iteration_results, 0))
+    print (f"Results for {exp_name}:")
+    print (f"Useful theorems: avg {averages[0]}, std {var[0]}")
+    print (f"Deduplicated theorems: avg {averages[1]}, std {var[1]}")
+    print (f"Proven theorems: avg {averages[2]}, std {var[2]}")
+    out.dump_to_folder(output_folder_path)
+    
 
 async def remove_dedup_fix (output_folder_path: str) -> None:
     useful_theorems = _extract_theorems_from_explanation_file(os.path.join(output_folder_path, "useful_theorems.txt"))
@@ -240,150 +276,21 @@ def get_reproof_values (output_folder_path: str) -> None:
                 intersect.append(thm["problem_translated"])
     print (f"Found theorems {count}/{len(useful_theorems)}") # Note: count can be larger than useful_theorems. This is because the model is allowed to conjecture the same theorem multiple times if it failed the proof.
     print (f"Proven theorems: {len(intersect)}/{(len(useful_theorems))} ({len(intersect) - len(old_proven_theorems)} improvement)")
-    
-        
-    
 
-
-def send_batch_evaluation (outcomes_filepath: str, output_folder_path: str, name: str = "Minimo evaluation") -> None:
-    if not os.path.exists(output_folder_path):
-        raise FileNotFoundError(f"{os.path.join(__path__, output_folder_path)}")
-    batch_file = os.path.join(output_folder_path, "batch_request.jsonl")
-    
-    theorem_list = _extract_theorems_from_outcomes(outcomes_filepath)
-    print(f"Got {len(theorem_list)} theorems")
-    prompts = _make_prompts(theorem_list)
-
-    with open(batch_file, 'w') as f:
-        for i, chat in enumerate(prompts):
-            request_dict = {
-                "custom_id": f"minimo-eval-{i}",
-                "method": "POST",
-                "url": "/v1/chat/completions",
-                "body": {
-                    "model": "gpt-4.1",
-                    "messages": chat,
-                    "max_tokens": 8192
-                }
-            }
-            json.dump(request_dict, f)
-            if i < len(prompts) - 1:
-                f.write('\n')
-    openai_file = model.files.create(file=open(batch_file, "rb"), purpose="batch")
-    model.batches.create(
-        input_file_id=openai_file.id,
-        completion_window='24h',
-        endpoint="/v1/chat/completions",
-        metadata={
-            "name": name
-        }
-    )
-
-def list_batch_evaluations (output_folder: str):
-    results = model.batches.list(limit=5)
-    with open(os.path.join(output_folder, "batch_list.json"), "w") as f:
-        f.write(results.to_json())
-
-def cancel_batch (id: str):
-    model.batches.cancel(batch_id=id)
-
-def get_batch_evaluations (id: str, output_folder: str):
-    batch = model.batches.retrieve(batch_id=id)
-    success = batch.request_counts.completed
-    useful = 0
-    malformed = 0
-    if batch.output_file_id:
-        output = model.files.content(file_id=batch.output_file_id)
-        text = output.response.text
-        with open(os.path.join(output_folder, "useful_theorems.txt"), "w") as use_f:
-            # with open(os.path.join(output_folder, ""))
-            for res in text.strip().split("\n"):
-                res_dict = json.loads(res)
-                # print(res_dict)
-                response = res_dict["response"]["body"]["choices"][0]["message"]["content"].split("\n")
-                if "USEFUL" not in response[-1]:
-                    malformed += 1
-                elif "NOT" not in response[-1]:
-                    useful += 1
-                    use_f.writelines(response)
-                    use_f.write("\n----\n\n")
-    
-    print ("RESULTS")
-    print (f"Succesful runs: {success}/{batch.request_counts.total}")
-    print (f"Useful theorems: {useful}/{success}")
-    print (f"Malformed results: {malformed}/{success}")
-    # for res in results.:
-
-def make_graph (outcomes_filepath: str, output_folder: str) -> None:
-    import dsprover
-    random.seed(8)
-    thm_logprob = random.sample(_extract_theorems_from_outcomes(outcomes_filepath, True), 100)
-    adj = {}
-    to_prove = []
-    for thm_1 in thm_logprob:
-        for thm_2 in thm_logprob:
-            if thm_1 == thm_2:
-                continue
-            # if thm_2[0] != '((v0 : Nat) -> (v1 : (v0 = 0)) -> (v2 : (v0 = v0)) -> (v3 : ((Nat.succ 0) = v0)) -> (v4 : (0 = v0)) -> (v5 : (0 = v0)) -> ((Nat.succ (Nat.succ 0)) = 0))':
-            #     continue
-            print(len(to_prove))
-            new_theorem = f"({thm_1[0]}) -> {thm_2[0]}"
-            to_prove.append(new_theorem)
-    print(len(to_prove))
-    res = [r[0] for r in dsprover.prove(to_prove, debug=True) if r[0]]
-    # with open(os.path.join(output_folder, "res_chosen.txt"), "w") as f:
-
-    #     f.write("\n\n\n".join(res))
-    # return
-    index = 0
-    for thm_1 in thm_logprob:
-        for thm_2 in thm_logprob:
-            if thm_1 == thm_2:
-                continue
-            logprob_new = res[index][1]
-            if res[index][0] and logprob_new > thm_2[1]:
-                if thm_1 not in adj:
-                    adj[thm_1[0]] = []
-                adj[thm_1[0]].append((thm_2[0], logprob_new - thm_2[1]))
-            index += 1
-    with open(os.path.join(output_folder, "graph.csv"), "w") as f:
-        f.write("A,B,weight")
-        for k,v in adj.items():
-            for edge in v:
-                f.write(f"{k},{edge[0]},{edge[1]}\n")
-
-def draw_graph (input_filepath: str, output_folder: str) -> None:
-    import pandas as pd
-    import networkx as nx
-    import matplotlib.pyplot as plt
-    df = pd.read_csv(input_filepath)
-    G = nx.DiGraph()
-    edges = []
-    weights = []
-    for _, row in df.iterrows():
-        G.add_edge(row["A"],row["B"],weight=row["weight"])
-        edges.append((row["A"], row["B"]))
-        weights.append(row["weight"] * 10)
-    
-    plt.figure(figsize=(12,8))
-
-    # edges, weights = nx.get_edge_attributes(G, "weight")
-    # nodelist = G.nodes()
-    pos = nx.shell_layout(G)
-    nx.draw(G, pos, node_color='b', edgelist=edges, edge_color=weights, width=5.0, alpha=0.3, edge_cmap=plt.cm.Blues)
-
-    plt.savefig(os.path.join(output_folder, "graph.png"))
-
-def look_at_graph (input_filepath: str) -> None:
-    import pandas as pd
-    df = pd.read_csv(input_filepath)
-    cnts = df["B"].value_counts()
-    print(cnts)
-    print("-------")
-    cnts = df["A"].value_counts()
-    print(cnts)
-    # for v in cnts[]
-
+def get_evaluation_metrics (exp_folder: str) -> None:
+    add_pre = lambda file : os.path.join(exp_folder, file)
+    with open(add_pre("outcomes_9.json")) as f:
+        outcomes = json.load(f)
+    correct_proof_count = len([o for o in outcomes if o["proof"] and not o["hindsight"]])
+    with open (add_pre("generated_theorems_9.json")) as f:
+        generated_theorems = json.load(f)
+    total_use_count = sum([int(gt["freq_used"]) for gt in generated_theorems])
+    number_of_theorems = len([1 for gt in generated_theorems if int(gt["freq_used"])])
+    exp_name = os.path.basename(exp_folder)
+    print (f"Results for {exp_name}:")
+    print (f"Number of proven conjectures: {correct_proof_count}")
+    print (f"Total theorem useage count: {total_use_count}")
+    print (f"Number of useful theorems: {number_of_theorems}")
 def count_its (filename: str) -> None:
     with open(filename) as f:
         lines = f.readlines()
@@ -400,11 +307,26 @@ def count_its (filename: str) -> None:
 
 
 if __name__ == "__main__":
-    OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/line21/"
+    exp_folders = [
+        # "/home/timothekasriel/minimo/learning/outputs/line18_2",
+        # "/home/timothekasriel/minimo/learning/outputs/line18_buggy",
+        # "/home/timothekasriel/minimo/learning/outputs/line19_2",
+        # "/home/timothekasriel/minimo/learning/outputs/line21",
+        # "/home/timothekasriel/minimo/learning/outputs/line22",
+        # "/home/timothekasriel/minimo/learning/outputs/line23",
+        "/home/timothekasriel/minimo/learning/outputs/line24",
+        # "/home/timothekasriel/minimo/learning/outputs/line25",
+        # "/home/timothekasriel/minimo/learning/outputs/line27",
+    ]
+    OUTPUT_FOLDER = "/home/timothekasriel/minimo_org/learning/outputs/filtered"
     # count_its("/home/timothekasriel/minimo/learning/outputs/line18/useful_theorems.txt")
     # print (f"Current evaluation: {os.path.basename(OUTPUT_FOLDER)}")
     # print(get_reproof_values(OUTPUT_FOLDER))
-    asyncio.run(run_evaluation(os.path.join(OUTPUT_FOLDER, "outcomes_9.json"), OUTPUT_FOLDER))
+
+    # asyncio.run(run_evaluation_at_k(os.path.join(OUTPUT_FOLDER, "outcomes_9.json"), OUTPUT_FOLDER, 5))
+    for exp_folder in exp_folders:
+        get_evaluation_metrics(exp_folder)
+    #     asyncio.run(run_evaluation_at_k(os.path.join(exp_folder, "outcomes_9.json"), exp_folder, 5))
     # asyncio.run(remove_dedup_fix(OUTPUT_FOLDER))
     # send_batch_evaluation("/Users/tkasriel/code/rsh/minimo/learning/outputs/orig_minimo/outcomes_arith.json", OUTPUT_FOLDER, "Original Minimo Arithmetic Evaluation")
     # list_batch_evaluations(OUTPUT_FOLDER)
