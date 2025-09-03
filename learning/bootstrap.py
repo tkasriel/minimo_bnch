@@ -570,9 +570,7 @@ def teacher_loop(cfg: DictConfig):
                                 hindsight=False,
                                 seed_used=seed_used.get(r.problem)))
         save_json(final_outcomes, "final_outcomes.json")
-        
-
-
+    
     if cfg.use_multiprocessing:
         for process in processes: # type: ignore
             instruction_queue.put(MPInstruction(instruction=InstructionEnum.STOP, theory=("",[]))) # type: ignore
@@ -580,12 +578,60 @@ def teacher_loop(cfg: DictConfig):
             process.join()
             process.close()        
 
+def reprove_conjectures_using_model (cfg: DictConfig, outcomes_filepath: str, model_filepath: str) -> None:
+    num_processes = 6
+    exp_dir = os.path.dirname(outcomes_filepath)
+    thms: list[ProofOutcome] = []
+
+    print (f"Running reproof on {exp_dir} using {model_filepath}")
+    time.sleep(5)
+    with open (outcomes_filepath) as f:
+        j = json.load(f)
+        outcomes = ProofOutcomeList.validate_python(j)
+    instruction_queue: mp.Queue = mp.Queue()
+    output_queue: mp.Queue = mp.Queue()
+    processes: list[mp.Process] = []
+
+    for j in range(num_processes):
+        new_process = mp.Process(target=process_main,kwargs={"id": j,
+                                                            "cfg": cfg,
+                                                            "instruction_queue": instruction_queue, 
+                                                            "output_queue": output_queue})
+        new_process.start()
+        processes.append(new_process)
+    conjectures = [o.problem for o in outcomes if not o.hindsight]
+    with open(os.path.join(os.path.dirname(__file__), "theories", cfg.theory.name + '.p')) as f:
+        theory = f.read()
+    premises = cfg.theory.premises
+
+    results = batch_prove (cfg, model_filepath, conjectures, theory, premises, instruction_queue, output_queue, extract_hindsight=False)
+    res_outcomes: list[ProofOutcome] = []
+    for r in results:
+        res_outcomes.append(ProofOutcome(iteration=-1,
+                                         problem=r.problem,
+                                         proof=r.proof,
+                                         logprob=r.logprob,
+                                         actions=r.solution_actions,
+                                         hindsight=False))
+    save_json(res_outcomes, os.path.join(exp_dir, "reproof.json"))
+    for process in processes: # type: ignore
+        instruction_queue.put(MPInstruction(instruction=InstructionEnum.STOP, theory=("",[]))) # type: ignore
+    for process in processes: # type: ignore
+        process.join()
+        process.close()        
+
+
+
 @hydra.main(version_base="1.2", config_path="config", config_name="bootstrap")
 def main(cfg: DictConfig):
     print('Running from:', os.getcwd())
     setup_wandb(cfg)
     if cfg.task == 'teacher':
         teacher_loop(cfg)
+    if cfg.task == "reproof":
+        outcomes_filepath="/home/timothekasriel/minimo/learning/outputs/line18_2/outcomes_9.json"
+        model_filepath="/home/timothekasriel/minimo/learning/outputs/line15/9.pt"
+        reprove_conjectures_using_model(cfg, outcomes_filepath, model_filepath)
 
 if __name__ == '__main__':
     main()
