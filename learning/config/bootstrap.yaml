@@ -23,6 +23,7 @@ metric_use_useage: False
 increase_variable_conjecturing: False
 prove_all_at_end: False
 deterministic: True
+conjecturing_bug: False
 
 
 difficulty_buckets:

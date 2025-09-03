@@ -468,7 +468,10 @@ def sample_conjecture(cfg, lm: "AgentLM", context, previous_conjectures: list[st
                     if "[" in c or "'" in c: # 
                         weighted_scores[i] *= 2
             
-            choice = random.choices(choices,weights=weighted_scores)[0]
+            if cfg.conjecturing_bug:
+                choice = random.choices(choices,)[0]
+            else:
+                choice = random.choices(choices,weights=weighted_scores)[0]
             generation += choice
             # Filter completions to those starting with the chosen character and drop the character.
             completions = [c[1:] for c in completions if c.startswith(choice)]
