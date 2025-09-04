@@ -626,6 +626,8 @@ def reprove_conjectures_using_model (cfg: DictConfig, outcomes_filepath: str, mo
 def main(cfg: DictConfig):
     print('Running from:', os.getcwd())
     setup_wandb(cfg)
+    if cfg.theory == "propositional-logic":
+        ALLOW_PROP_AS_TYPE = True
     if cfg.task == 'teacher':
         teacher_loop(cfg)
     if cfg.task == "reproof":

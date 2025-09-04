@@ -19,9 +19,6 @@ from util import batch_inference, ALLOW_PROP_AS_TYPE
 # Decl := "(" Atom ":" Type ")"
 # Arrow := "[" decl* Prop "]"
 
-
-ALLOW_PROP_AS_TYPE = False
-
 @dataclass
 class Context:
     derivation: peano.PyDerivation

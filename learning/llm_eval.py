@@ -234,7 +234,7 @@ async def run_evaluation_at_k (outcomes_filepath: str, output_folder_path: str, 
         iteration_results[i] = [len(local_results.useful_theorems), len(local_results.deduplicated_theorems), len(local_results.proven_deduplicated)]
         out.extend(local_results)
     print(iteration_results)
-    exp_name = os.path.dirna(output_folder_path)
+    exp_name = os.path.dirname(output_folder_path)
     averages = np.average(iteration_results, 0)
     var = np.sqrt(np.var(iteration_results, 0))
     print (f"Results for {exp_name}:")
@@ -279,10 +279,10 @@ def get_reproof_values (output_folder_path: str) -> None:
 
 def get_evaluation_metrics (exp_folder: str) -> None:
     add_pre = lambda file : os.path.join(exp_folder, file)
-    with open(add_pre("outcomes_9.json")) as f:
+    with open(add_pre("outcomes_15.json")) as f:
         outcomes = json.load(f)
     correct_proof_count = len([o for o in outcomes if o["proof"] and not o["hindsight"]])
-    with open (add_pre("generated_theorems_9.json")) as f:
+    with open (add_pre("generated_theorems_15.json")) as f:
         generated_theorems = json.load(f)
     total_use_count = sum([int(gt["freq_used"]) for gt in generated_theorems])
     number_of_theorems = len([1 for gt in generated_theorems if int(gt["freq_used"])])
@@ -314,19 +314,21 @@ if __name__ == "__main__":
         # "/home/timothekasriel/minimo/learning/outputs/line21",
         # "/home/timothekasriel/minimo/learning/outputs/line22",
         # "/home/timothekasriel/minimo/learning/outputs/line23",
-        "/home/timothekasriel/minimo/learning/outputs/line24",
+        # "/home/timothekasriel/minimo/learning/outputs/line24",
         # "/home/timothekasriel/minimo/learning/outputs/line25",
-        # "/home/timothekasriel/minimo/learning/outputs/line27",
+        "/home/timothekasriel/minimo/learning/outputs/line27",
+        "/home/timothekasriel/minimo/learning/outputs/line29"
     ]
-    OUTPUT_FOLDER = "/home/timothekasriel/minimo_org/learning/outputs/filtered"
+    OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/line29"
     # count_its("/home/timothekasriel/minimo/learning/outputs/line18/useful_theorems.txt")
     # print (f"Current evaluation: {os.path.basename(OUTPUT_FOLDER)}")
     # print(get_reproof_values(OUTPUT_FOLDER))
 
+    # asyncio.run(run_evaluation_at_k(os.path.join(OUTPUT_FOLDER, "outcomes_5.json"), OUTPUT_FOLDER, 5))
     # asyncio.run(run_evaluation_at_k(os.path.join(OUTPUT_FOLDER, "outcomes_9.json"), OUTPUT_FOLDER, 5))
     for exp_folder in exp_folders:
         get_evaluation_metrics(exp_folder)
-    #     asyncio.run(run_evaluation_at_k(os.path.join(exp_folder, "outcomes_9.json"), exp_folder, 5))
+    #     asyncio.run(run_evaluation_at_k(os.path.join(exp_folder, "outcomes_5.json"), exp_folder, 5))
     # asyncio.run(remove_dedup_fix(OUTPUT_FOLDER))
     # send_batch_evaluation("/Users/tkasriel/code/rsh/minimo/learning/outputs/orig_minimo/outcomes_arith.json", OUTPUT_FOLDER, "Original Minimo Arithmetic Evaluation")
     # list_batch_evaluations(OUTPUT_FOLDER)
