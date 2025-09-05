@@ -81,7 +81,7 @@ def try_prove(cfg, agent: ProofSearchAgent, theory: BackgroundTheory, statement:
                         theory.premises,
                         agent._policy)
             except:
-                pass
+                print ("Extracting hindsight timed out")
 
 
         return StudentResult(

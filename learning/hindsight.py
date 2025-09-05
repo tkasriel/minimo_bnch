@@ -81,8 +81,9 @@ def extract_hindsight_examples(cfg,root,
                 success, _, _, _ = mcts.evaluate(cfg, mcts_root, verbose=False)
                 if success:
                     break
-                if time.time() - st_time > 300:
-                    break
+                if time.time() - st_time > 500:
+                    return hindsight_examples
+                    
 
             assert success, 'Hindsight MCTS failed'
 

@@ -19,7 +19,8 @@ support_theorem_use: False
 support_novelty: False
 intro_skip: False
 max_proof_expansion: -1 # -1 for no max
-metric_use_useage: False
+metric_use_usage: True
+metric_use_logprob: True
 increase_variable_conjecturing: False
 prove_all_at_end: False
 deterministic: True

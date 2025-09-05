@@ -859,7 +859,7 @@ class MonteCarloTreeSearch(Policy):
         return self.evaluate(cfg, root, on_expand=on_expand, verbose=verbose)
 
     def evaluate(self, cfg, root: TreeSearchNode, start_index=0,
-                 on_expand=None, verbose=False) -> np.array:
+                 on_expand=None, verbose=False, timeout: int=300) -> np.array:
         # breakpoint()
         st_time = time.time()
         for i in range(self._budget):
@@ -893,8 +893,10 @@ class MonteCarloTreeSearch(Policy):
             _, reward = self._default_policy.evaluate(cfg, leaf)
 
             self._backpropagate_reward(leaf, reward)
+            
+            # timeout
             end_time = time.time()
-            if end_time - st_time > 500:
+            if end_time - st_time > timeout:
                 with open("long_proof_times.txt", 'a+') as f:
                     f.write(str(end_time-st_time) + "\n")
                 return False, 0.0, 0.0, -1
@@ -1076,7 +1078,6 @@ class ProofSearchAgent:
         examples = self._policy.extract_examples(root)
         self._examples.extend(examples)
         self._examples = self._examples[-self._max_examples:]
-        print (f"Proving took {time.time()-st_time}")
         return ProofSearchResult(problem, solved, root, examples, iterations)
 
     def train(self, examples=None):

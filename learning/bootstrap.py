@@ -24,7 +24,7 @@ from classes import InstructionEnum, MPInstruction, MPResult, ProofOutcome, Proo
 from convert_to_lean import convert_arith
 import worker
 from worker import StudentResult
-from util import format_blocks_with_indent, get_seed_statement, sample_batch, setup_wandb, value_color, save_json
+from util import ALLOW_PROP_AS_TYPE, format_blocks_with_indent, get_seed_statement, sample_batch, setup_wandb, value_color, save_json
 from conjecture import AgentLM, Context, sample_conjecture
 from proofsearch import ProofSearchAgent, make_agent
 import re
@@ -128,6 +128,7 @@ def batch_prove (cfg, agent_file: str, conjectures: list[str], theory: str, prem
     progress_bar = tqdm(total=len(conjectures))
     while len(student_results) < len(conjectures) and num_dead < cfg.num_processes:
         mp_result = MPResult.model_validate(output_queue.get())
+        print (f"Proving took {mp_result.time_taken}s")
         if mp_result.instruction == InstructionEnum.CONJECTURE:
             # Leftover from conjecturing. We could use them, but for now I'll just throw them out
             continue
@@ -470,8 +471,8 @@ def teacher_loop(cfg: DictConfig):
                             "used_theorems": list(map(lambda x: x.theorem, theorems_to_check)),
                             "improvement": proof_res.logprob - hard_theorem.logprob
                         })
-                        if proof_res.logprob > hard_theorem.logprob:
-                            if cfg.metric_use_useage:
+                        if proof_res.logprob > hard_theorem.logprob or not cfg.metric_use_logprob:
+                            if cfg.metric_use_usage:
                                 for line in proof_res.proof:
                                     for thm in theorems_to_check:
                                         thm_name = thm.theorem.split(" : ")[0]
@@ -490,7 +491,7 @@ def teacher_loop(cfg: DictConfig):
                     if proof_res.hindsight_examples and cfg.train_on_usefulness_testing:
                         extract_examples(cfg, difficulty_buckets, permanent_deriv, seen_hindsight_goals, examples, proof_res, thresholds, verbose=True)
             useful_theorems = [thm for thm in useful_theorems if not (i - thm.iter_generated >= 3 and thm.tot_improvement <= 1e-7)]
-            if cfg.metric_use_useage:
+            if cfg.metric_use_usage:
                 useful_theorems.sort(key=lambda thm: (thm.tot_improvement)/(i-thm.iter_generated))
             else:
                 useful_theorems.sort(key=lambda thm: (thm.tot_improvement/(thm.freq_used+1))/(i-thm.iter_generated))
