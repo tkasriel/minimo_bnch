@@ -330,7 +330,7 @@ def save_json(obj: Sequence[BaseModel] | list[dict], path: str):
         return
     if isinstance(obj[0], BaseModel):
         obj = [o.model_dump() for o in obj] # type: ignore
-    with open(path, 'w') as f:
+    with open(path, 'w', encoding = "utf-8") as f:
         json.dump(obj, f)
 
 
