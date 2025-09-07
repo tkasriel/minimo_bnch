@@ -8,7 +8,7 @@ defaults:
 iterations: 10
 n_conjectures: 200
 use_multiprocessing: true
-num_processes: 5
+num_processes: 6
 mp_start_method: spawn
 
 # Experiment flags
