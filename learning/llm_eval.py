@@ -230,7 +230,8 @@ async def run_evaluation_at_k (outcomes_filepath: str, output_folder_path: str, 
         raise FileNotFoundError(f"Cannot find flags file (needed to detect theory)")
     
     with open(cfg_path) as f:
-        flags = json.load(f)
+        raw = f.read().replace("'", "\"")
+        flags = json.loads(raw)
     theory_name = flags["theory"]["name"]
 
     print(f"Autodetected theory: {theory_name}")
@@ -302,7 +303,8 @@ def get_reproof_values (output_folder_path: str) -> None:
         raise FileNotFoundError(f"Cannot find flags file (needed to detect theory)")
     
     with open(cfg_path) as f:
-        flags = json.load(f)
+        raw = f.read().replace("'", "\"")
+        flags = json.loads(raw)
     theory_name = flags["theory"]["name"]
 
     print(f"Autodetected theory: {theory_name}")

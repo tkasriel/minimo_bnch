@@ -254,13 +254,12 @@ def teacher_loop(cfg: DictConfig):
 
     continue_dir = cfg.get('continue')
     start_iteration = 0
-    
+    with open("flags.txt", "w") as f:
+        f.write(str(cfg))
     if continue_dir is not None:
         os.makedirs(continue_dir, exist_ok=True)
         os.chdir(continue_dir)
         print('Continuing run from', continue_dir)
-        with open("flags.txt", "w") as f:
-            f.write(str(cfg))
         # Find largest iteration number such that i.pt exists.
         i = 0
         while os.path.exists(f'{i}.pt'):
