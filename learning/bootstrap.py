@@ -13,7 +13,8 @@ import sys
 import time
 
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
+
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -254,8 +255,8 @@ def teacher_loop(cfg: DictConfig):
 
     continue_dir = cfg.get('continue')
     start_iteration = 0
-    with open("flags.txt", "w") as f:
-        f.write(str(cfg))
+    with open("flags.json", "w") as f:
+        json.dump(OmegaConf.to_container(cfg, resolve=True), f)
     if continue_dir is not None:
         os.makedirs(continue_dir, exist_ok=True)
         os.chdir(continue_dir)

@@ -225,16 +225,15 @@ async def run_evaluation_at_k (outcomes_filepath: str, output_folder_path: str, 
     if not os.path.exists(outcomes_filepath):
         raise FileNotFoundError(f"Cannot find outcomes file")
     
-    cfg_path = os.path.join(os.path.dirname(outcomes_filepath), "flags.txt")
+    cfg_path = os.path.join(os.path.dirname(outcomes_filepath), "flags.json")
     if not os.path.exists(cfg_path):
         raise FileNotFoundError(f"Cannot find flags file (needed to detect theory)")
     
     with open(cfg_path) as f:
-        raw = f.read().replace("'", "\"")
-        flags = json.loads(raw)
+        flags = json.load(f)
     theory_name = flags["theory"]["name"]
 
-    print(f"Autodetected theory: {theory_name}")
+    print(f"Detected theory: {theory_name}")
 
     theorem_list: list[Theorem] = _extract_theorems_from_outcomes(outcomes_filepath, include_unproven=True, theory_name = theory_name)
     prompt_list = _make_prompts([t.thm_string for t in theorem_list], theory_name = theory_name)
@@ -298,16 +297,15 @@ async def remove_dedup_fix (output_folder_path: str) -> None:
 
 def get_reproof_values (output_folder_path: str) -> None:
 
-    cfg_path = os.path.join(os.path.dirname(output_folder_path), "flags.txt")
+    cfg_path = os.path.join(os.path.dirname(output_folder_path), "flags.json")
     if not os.path.exists(cfg_path):
         raise FileNotFoundError(f"Cannot find flags file (needed to detect theory)")
     
     with open(cfg_path) as f:
-        raw = f.read().replace("'", "\"")
-        flags = json.loads(raw)
+        flags = json.load(f)
     theory_name = flags["theory"]["name"]
 
-    print(f"Autodetected theory: {theory_name}")
+    print(f"Detected theory: {theory_name}")
 
     # It's more difficult than it would seem as the function is non-injective. So we first need to match which theorems were originally evaluated.
     assert os.path.exists(os.path.join(output_folder_path, "final_outcomes.json"))
@@ -385,7 +383,7 @@ if __name__ == "__main__":
     # asyncio.run(run_evaluation_at_k(os.path.join(OUTPUT_FOLDER, "outcomes_9.json"), OUTPUT_FOLDER, 5))
     for exp_folder in exp_folders:
         get_evaluation_metrics(exp_folder)
-    #     asyncio.run(run_evaluation_at_k(os.path.join(exp_folder, "outcomes_5.json"), exp_folder, 5))
+        # asyncio.run(run_evaluation_at_k(os.path.join(exp_folder, "outcomes_5.json"), exp_folder, 5))
     # asyncio.run(remove_dedup_fix(OUTPUT_FOLDER))
     # send_batch_evaluation("/Users/tkasriel/code/rsh/minimo/learning/outputs/orig_minimo/outcomes_arith.json", OUTPUT_FOLDER, "Original Minimo Arithmetic Evaluation")
     # list_batch_evaluations(OUTPUT_FOLDER)
