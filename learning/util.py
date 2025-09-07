@@ -22,7 +22,6 @@ from tqdm import tqdm
 
 ALLOW_PROP_AS_TYPE = False
 
-
 PAD = 0
 BOS = 1
 EOS = 2

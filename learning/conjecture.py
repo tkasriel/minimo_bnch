@@ -6,7 +6,9 @@ from typing import Union, Optional
 import random
 import re
 import math
-
+import hydra
+from omegaconf import DictConfig
+import os
 import peano
 from util import batch_inference, ALLOW_PROP_AS_TYPE
 
@@ -599,6 +601,9 @@ def space_completions(prefix, completions):
     return spaced_completions
 
 class ConjectureCompletionEngineTest(unittest.TestCase):
+    def __init__(self, cfg):
+        self.cfg = cfg
+
     def test_spaced_completions(self):
         prefix = '(='
         completions = ['y', 'z']
@@ -677,10 +682,14 @@ class ConjectureCompletionEngineTest(unittest.TestCase):
         lm = AgentLM(agent, '')
 
         for _ in range(100):
-            print(sample_conjecture(lm, context, '', 100))
+            print(sample_conjecture(self.cfg, lm, context, '', 100, []))
 
     def test_propositional_logic_conjectures(self):
-        with open('theories/propositional-logic.p', 'r') as f:
+        if "output" in os.getcwd():
+            theory_folder = "../../../theories"
+        else:
+            theory_folder = "theories"
+        with open(theory_folder + '/propositional-logic.p', 'r') as f:
             theory = f.read()
 
         d = peano.PyDerivation()
@@ -689,4 +698,33 @@ class ConjectureCompletionEngineTest(unittest.TestCase):
         context = Context(d, None, [])
         lm = RandomLM()
         for _ in range(50):
-            print(sample_conjecture(lm, context, 50))
+            print(sample_conjecture(self.cfg, lm, context, 50, []))
+
+
+    def test_group_theory_conjectures(self):
+        if "output" in os.getcwd():
+            theory_folder = "../../../theories"
+        else:
+            theory_folder = "theories"
+        with open(theory_folder + '/groups.p', 'r') as f:
+            theory = f.read()
+
+        d = peano.PyDerivation()
+        d.incorporate(theory)
+
+        context = Context(d, None, [])
+        lm = RandomLM()
+        for _ in range(50):
+            conj = sample_conjecture(self.cfg, lm, context, 50, [])
+            if conj:
+                print(d.contract(conj))
+
+@hydra.main(version_base="1.2", config_path="config", config_name="bootstrap")
+def main(cfg: DictConfig):
+    global ALLOW_PROP_AS_TYPE
+    ALLOW_PROP_AS_TYPE = False
+    test = ConjectureCompletionEngineTest(cfg)
+    test.test_group_theory_conjectures()
+
+if __name__ == "__main__":
+    main()

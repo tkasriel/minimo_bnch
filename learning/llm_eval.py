@@ -13,7 +13,7 @@ from pydantic import BaseModel
 import tqdm
 from tqdm.asyncio import tqdm_asyncio
 
-from convert_to_lean import convert_arith
+from convert_to_lean import convert_peano_to_lean
 
 if not dotenv.load_dotenv():
     raise ValueError("Need to set api key in .env")
@@ -62,7 +62,7 @@ class LLMUsefulnessEvalResult (BaseModel):
         self.proven_deduplicated.update(other.proven_deduplicated)
         
 
-def _extract_theorems_from_outcomes(outcomes_filepath: str, include_hindsight: bool = False, include_unproven: bool = False) -> list[Theorem]:
+def _extract_theorems_from_outcomes(outcomes_filepath: str, include_hindsight: bool = False, include_unproven: bool = False, theory_name: str = "") -> list[Theorem]:
     with open(outcomes_filepath) as f:
         outcomes = json.load(f)
     results = []
@@ -73,7 +73,7 @@ def _extract_theorems_from_outcomes(outcomes_filepath: str, include_hindsight: b
             continue
         if "problem_translated" not in o.keys():
             # Old non-translated problems, pre-dsprover
-            o["problem_translated"] = convert_arith(o["problem"], i, simplify=True)
+            o["problem_translated"] = convert_peano_to_lean(o["problem"], i, simplify=True, theory_string = theory_name)
         # if i == 2815:
         #     print(o)
         #     sys.exit(0)
@@ -88,11 +88,9 @@ def _extract_theorems_from_outcomes(outcomes_filepath: str, include_hindsight: b
                                 logprob=float(o.get("logprob", 0.0))))
     return results
 
-def _make_prompts (theorems: list[str]) -> list[list[dict[str, str]]]:
-    prompt = """You are tasked to judge whether a given lean theorem could be considered useful for an automatic theorem prover to have among its known theorems.
-This theorem prover has only access to the following axioms and known theorems:
-```
-Nat : type.
+def _make_prompts (theorems: list[str], theory_name: str = "") -> list[list[dict[str, str]]]:
+    if("nat" in theory_name):
+        known_theorems = """Nat : type.
 0 : Nat.
 Nat.succ : [Nat -> Nat].
 1 : Nat.
@@ -103,12 +101,48 @@ o_s : Nat.succ 0 = 1.
 +_s : (n : Nat) -> (m : Nat) -> n + (Nat.succ m) = Nat.succ (n + m).
 *_z : (n : Nat) -> n * 0 = 0.
 *_s : (n : Nat) -> (m : Nat) -> n * (Nat.succ m) = n + n * m.
-nat_ind : (p : (Nat -> Prop)) -> (p z) -> ((n : Nat) -> (p n) -> p (Nat.succ n)) -> (n : Nat) -> (p n).
+nat_ind : (p : (Nat -> Prop)) -> (p z) -> ((n : Nat) -> (p n) -> p (Nat.succ n)) -> (n : Nat) -> (p n)."""
+    elif("group" in theory_name):
+        known_theorems = """G : type.
+• : [G -> G -> G].
+1 : G.
+
+op_assoc : (v0 : G) -> (v1 : G) -> (v2 : G) -> (((v0 • v1) • v2) = (v0 • (v1 • v2))).
+op_comm : (v0 : G) -> (v1 : G) -> ((v0 • v1) = (v1 • v0)).
+id_1 : (1 • v0) = v0).
+inv_1 : (v0 : G) -> (((v0⁻¹) • v0) = 1).
+"""
+    elif ("prop" in theory_name):
+        known_theorems = """Prop : type.
+
+false : Prop.
+¬ : [Prop -> Prop].
+∧ : [Prop -> Prop -> Prop].
+∨ : [Prop -> Prop -> Prop].
+↔ : [Prop -> Prop -> Prop].
+
+and_i : ((v0 : Prop) → (v1 : Prop) → v0 → v1 → (v0 ∧ v1))
+and_el : ((v0 : Prop) → (v1 : Prop) → (v0 ∧ v1) → v0)
+and_er : ((v0 : Prop) → (v1 : Prop) → (v0 ∧ v1) → v1)
+or_il : ((v0 : Prop) → (v1 : Prop) → v0 → (v0 ∨ v1))
+or_ir : ((v0 : Prop) → (v1 : Prop) → v1 → (v0 ∨ v1))
+not_i : ((v0 : Prop) → (v0 → false) → (¬ v0))
+not_e : ((v0 : Prop) → (¬ v0) → v0 → false)
+exfalso : (false → (v0 : Prop) → v0)
+iff_i : ((v0 : Prop) → (v1 : Prop) → (v0 → v1) → (v1 → v0) → (v0 ↔ v1))
+iff_el : ((v0 : Prop) → (v1 : Prop) → (v0 ↔ v1) → (v0 → v1))
+iff_er : ((v0 : Prop) → (v1 : Prop) → (v0 ↔ v1) → (v1 → v0))
+em : ((v0 : Prop) → (v0 ∨ (¬ v0)))
+"""
+    prompt = f"""You are tasked to judge whether a given lean theorem could be considered useful for an automatic theorem prover to have among its known theorems.
+This theorem prover has only access to the following axioms and known theorems:
 ```
+```
+{known_theorems}
 As well as access to the `rfl` and `rewrite` commands
 Here is the theorem you are to evaluate
 ```lean4
-{}
+{{}}
 ```
 Think through the problem step by step. Translate the problem into natural language, then think of what the possible uses of the theorem could be, whether it's obviously true and whether it means something.
 On the last line, say either USEFUL or NOT USEFUL and nothing else.
@@ -190,8 +224,19 @@ async def run_evaluation_at_k (outcomes_filepath: str, output_folder_path: str, 
     os.makedirs(output_folder_path, exist_ok = True)
     if not os.path.exists(outcomes_filepath):
         raise FileNotFoundError(f"Cannot find outcomes file")
-    theorem_list: list[Theorem] = _extract_theorems_from_outcomes(outcomes_filepath, include_unproven=True)
-    prompt_list = _make_prompts([t.thm_string for t in theorem_list])
+    
+    cfg_path = os.path.join(os.path.dirname(outcomes_filepath), "flags.txt")
+    if not os.path.exists(cfg_path):
+        raise FileNotFoundError(f"Cannot find flags file (needed to detect theory)")
+    
+    with open(cfg_path) as f:
+        flags = json.load(f)
+    theory_name = flags["theory"]["name"]
+
+    print(f"Autodetected theory: {theory_name}")
+
+    theorem_list: list[Theorem] = _extract_theorems_from_outcomes(outcomes_filepath, include_unproven=True, theory_name = theory_name)
+    prompt_list = _make_prompts([t.thm_string for t in theorem_list], theory_name = theory_name)
     out = LLMUsefulnessEvalResult()
 
     print(f"Sending {k * len(prompt_list)} requests in 5s")
@@ -252,10 +297,20 @@ async def remove_dedup_fix (output_folder_path: str) -> None:
 
 def get_reproof_values (output_folder_path: str) -> None:
 
+    cfg_path = os.path.join(os.path.dirname(output_folder_path), "flags.txt")
+    if not os.path.exists(cfg_path):
+        raise FileNotFoundError(f"Cannot find flags file (needed to detect theory)")
+    
+    with open(cfg_path) as f:
+        flags = json.load(f)
+    theory_name = flags["theory"]["name"]
+
+    print(f"Autodetected theory: {theory_name}")
+
     # It's more difficult than it would seem as the function is non-injective. So we first need to match which theorems were originally evaluated.
     assert os.path.exists(os.path.join(output_folder_path, "final_outcomes.json"))
     useful_theorems = _extract_theorems_from_explanation_file(os.path.join(output_folder_path, "useful_theorem_dedup.txt"))
-    original_outcomes = _extract_theorems_from_outcomes(os.path.join(output_folder_path, "outcomes_9.json"), include_unproven=True)
+    original_outcomes = _extract_theorems_from_outcomes(os.path.join(output_folder_path, "outcomes_9.json"), include_unproven=True, theory_name=theory_name)
     old_proven_theorems = _extract_theorems_from_explanation_file(os.path.join(output_folder_path, "useful_theorem_dedup_proven.txt"))
     useful_theorem_names = list(map(lambda x: x.thm_string, useful_theorems))
     original_names = []
