@@ -134,6 +134,8 @@ iff_el : ((v0 : Prop) → (v1 : Prop) → (v0 ↔ v1) → (v0 → v1))
 iff_er : ((v0 : Prop) → (v1 : Prop) → (v0 ↔ v1) → (v1 → v0))
 em : ((v0 : Prop) → (v0 ∨ (¬ v0)))
 """
+    else:
+        raise Exception("Unknown theory")
     prompt = f"""You are tasked to judge whether a given lean theorem could be considered useful for an automatic theorem prover to have among its known theorems.
 This theorem prover has only access to the following axioms and known theorems:
 ```
