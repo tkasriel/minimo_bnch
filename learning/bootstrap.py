@@ -13,7 +13,8 @@ import sys
 import time
 
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
+
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -21,7 +22,7 @@ import torch.multiprocessing as mp
 
 import peano
 from classes import InstructionEnum, MPInstruction, MPResult, ProofOutcome, ProofOutcomeList, UsefulConjecture, UsefulConjectureList
-from convert_to_lean import convert_arith
+from convert_to_lean import convert_peano_to_lean
 import worker
 from worker import StudentResult
 from util import ALLOW_PROP_AS_TYPE, format_blocks_with_indent, get_seed_statement, sample_batch, setup_wandb, value_color, save_json
@@ -254,13 +255,12 @@ def teacher_loop(cfg: DictConfig):
 
     continue_dir = cfg.get('continue')
     start_iteration = 0
-    
+    with open("flags.json", "w") as f:
+        json.dump(OmegaConf.to_container(cfg, resolve=True), f)
     if continue_dir is not None:
         os.makedirs(continue_dir, exist_ok=True)
         os.chdir(continue_dir)
         print('Continuing run from', continue_dir)
-        with open("flags.txt", "w") as f:
-            f.write(str(cfg))
         # Find largest iteration number such that i.pt exists.
         i = 0
         while os.path.exists(f'{i}.pt'):
@@ -380,7 +380,7 @@ def teacher_loop(cfg: DictConfig):
                                 iteration=i,
                                 problem=student_result.problem,
                                 problem_raw=comp_to_raw_dict.get(student_result.problem, None),
-                                problem_translated=str(convert_arith(student_result.problem, 0, False)),
+                                problem_translated=str(convert_peano_to_lean(student_result.problem, 0, False, cfg.theory.name)),
                                 proof=student_result.proof,
                                 logprob=student_result.logprob,
                                 actions=student_result.solution_actions,
@@ -394,7 +394,7 @@ def teacher_loop(cfg: DictConfig):
                                     problem=h.statement,
                                     problem_raw=None,
                                     seed_used=None,
-                                    problem_translated=str(convert_arith(h.statement, 0, False)),
+                                    problem_translated=str(convert_peano_to_lean(h.statement, 0, False, cfg.theory.name)),
                                     proof=h.proof,
                                     logprob=h.logprob,
                                     actions=h.solution_actions,
@@ -466,7 +466,7 @@ def teacher_loop(cfg: DictConfig):
                         success_count +=1 
                         usefulness_outcomes.append({
                             "iteration": i,
-                            "problem": convert_arith(hard_theorem.problem, 0, False),
+                            "problem": convert_peano_to_lean(hard_theorem.problem, 0, False, cfg.theory.name),
                             "proof": proof_res.proof,
                             "used_theorems": list(map(lambda x: x.theorem, theorems_to_check)),
                             "improvement": proof_res.logprob - hard_theorem.logprob
@@ -564,7 +564,7 @@ def teacher_loop(cfg: DictConfig):
                                 iteration=-1,
                                 problem=r.problem,
                                 problem_raw=comp_to_raw_dict.get(r.problem, None),
-                                problem_translated=str(convert_arith(r.problem, 0, False)),
+                                problem_translated=str(convert_peano_to_lean(r.problem, 0, False, cfg.theory.name)),
                                 proof=r.proof,
                                 logprob=r.logprob,
                                 actions=r.solution_actions,
@@ -628,6 +628,7 @@ def main(cfg: DictConfig):
     print('Running from:', os.getcwd())
     setup_wandb(cfg)
     if cfg.theory == "propositional-logic":
+        global ALLOW_PROP_AS_TYPE
         ALLOW_PROP_AS_TYPE = True
     if cfg.task == 'teacher':
         teacher_loop(cfg)

@@ -22,7 +22,6 @@ from tqdm import tqdm
 
 ALLOW_PROP_AS_TYPE = False
 
-
 PAD = 0
 BOS = 1
 EOS = 2
@@ -331,8 +330,8 @@ def save_json(obj: Sequence[BaseModel] | list[dict], path: str):
         return
     if isinstance(obj[0], BaseModel):
         obj = [o.model_dump() for o in obj] # type: ignore
-    with open(path, 'w') as f:
-        json.dump(obj, f)
+    with open(path, 'w', encoding = "utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False)
 
 
 def replace(l: tuple, i: int, x: object):
