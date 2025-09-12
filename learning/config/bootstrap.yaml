@@ -12,20 +12,23 @@ num_processes: 6
 mp_start_method: spawn
 
 # Experiment flags
-seed: False
-trivial_filtering: False
-train_on_usefulness_testing: False
-support_theorem_use: False
-support_novelty: False
-intro_skip: False
-max_proof_expansion: -1 # -1 for no max
+trivial_filtering: True
+support_theorem_use: True
 metric_use_usage: True
 metric_use_logprob: True
+train_on_usefulness: True # This is for the *conjecturer*. If we get a signal from useful conjectures, we train the model on these conjectures
+train_on_usefulness_testing: True # This is for the *prover*, ie train on usefulness testing examples from proving
+deterministic: False
+train_improvement: False
+
+
+seed: False
+intro_skip: False
+support_novelty: True
+max_proof_expansion: -1 # -1 for no max
 increase_variable_conjecturing: False
 prove_all_at_end: False
-deterministic: True
 conjecturing_bug: False
-
 
 difficulty_buckets:
     - hard: 20

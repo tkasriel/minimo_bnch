@@ -35,7 +35,7 @@ def extract_hindsight_examples(cfg,root,
 
     # 2- For each node, find subtree root and path from root to node
     hindsight_examples = []
-
+    st_time = time.time()   
     for goal, node in goals_to_node.items():
         subtree_root, path = find_subtree_root(node)
         # NOTE: For now, we only consider paths that have no new constructions
@@ -76,13 +76,15 @@ def extract_hindsight_examples(cfg,root,
             # Run MCTS until success. This should be fast and typically only take
             # one iteration, since we're using the optimal policy. It only takes
             # more iterations because MCTS will force some exploration.
-            st_time = time.time()
+            
             for _ in range(10):
                 success, _, _, _ = mcts.evaluate(cfg, mcts_root, verbose=False)
+                if time.time() - st_time > 500:
+                    print (f"Hindsight took {time.time()-st_time}s")
+                    return hindsight_examples
                 if success:
                     break
-                if time.time() - st_time > 500:
-                    return hindsight_examples
+                
                     
 
             assert success, 'Hindsight MCTS failed'

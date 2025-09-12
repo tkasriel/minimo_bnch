@@ -21,7 +21,7 @@ from tqdm import tqdm
 import torch.multiprocessing as mp
 
 import peano
-from classes import InstructionEnum, MPInstruction, MPResult, ProofOutcome, ProofOutcomeList, UsefulConjecture, UsefulConjectureList
+from classes import InstructionEnum, MPInstruction, MPResult, ProofOutcome, ProofOutcomeList, UsefulConjecture, UsefulConjectureList, UsefulnessOutcome, UsefulnessOutcomeList
 from convert_to_lean import convert_peano_to_lean
 import worker
 from worker import StudentResult
@@ -68,7 +68,7 @@ def process_main(id: int, cfg, instruction_queue: mp.Queue, output_queue: mp.Que
         
         
         instruction = MPInstruction.model_validate(instruction_queue.get())
-        # profiler = cProfile.Profile()
+        profiler = cProfile.Profile()
         
         # Import new theory if needed
         if instruction.theory[0] != current_theory:
@@ -99,22 +99,17 @@ def process_main(id: int, cfg, instruction_queue: mp.Queue, output_queue: mp.Que
         elif instruction.instruction == InstructionEnum.PROOF:
             assert instruction.thm_to_prove
             assert type(background_theory) is worker.BackgroundTheory
-            # profiler.enable()
+            st_time = time.time()
+            profiler.enable()
             result = worker.try_prove(cfg, agent, background_theory, instruction.thm_to_prove, extract_hindsight=instruction.extract_hindsight or False, verbose=False)
             # tr.print_diff()
             # breakpoint()
-            # profiler.disable()
+            profiler.disable()
+            end_time = time.time()
             # profiler.dump_stats(f"profiler_proof_res_{id}.dmp")
             # end_time = time.time()
-            # if end_time - st_time > 300: # check what's going on with the longer proofs
-            #     all_objs = muppy.get_objects()
-            #     summ = summary.summarize(all_objs)
-            #     summary.print_(summ)
-            #     # breakpoint()
-            #     del all_objs, summ
-            #     if "continue" in cfg.keys():
-            #         profiler.dump_stats(os.path.join(cfg["continue"], f"profiler_res_{id}.txt"))
-            #     profiler.dump_stats(f"profiler_res_{id}.txt")
+            if end_time - st_time > 1000: # check what's going on with the longer proofs
+                profiler.dump_stats(f"profiler_res_{id}.txt")
             output_queue.put(MPResult(instruction=InstructionEnum.PROOF, result=result, time_taken=time.time()-start_time))
         # print (f"Curr memory : {process.memory_info()[0] / float(2 ** 20)}")
     output_queue.put(MPResult(instruction=InstructionEnum.STOP, result=id, time_taken=0.0))
@@ -248,8 +243,9 @@ def teacher_loop(cfg: DictConfig):
     seed_used = {}
     seen_hindsight_goals = set()
     proofs = []
+    conjecture_examples = []
     outcomes: list[ProofOutcome] = []
-    usefulness_outcomes = []
+    usefulness_outcomes: list[UsefulnessOutcome] = []
     useful_theorems: list[UsefulConjecture] = []
     # examples: ProofExamplesList = []
 
@@ -292,7 +288,9 @@ def teacher_loop(cfg: DictConfig):
                 thms = json.load(f)
                 useful_theorems = UsefulConjectureList.validate_python(thms)
             with open(f"usefulness_outcomes_{i-1}.json") as f:
-                usefulness_outcomes = json.load(f)
+                j = json.load(f)
+                usefulness_outcomes = UsefulnessOutcomeList.validate_python(j)
+
 
         print('Loaded', len(proven_conjectures), 'proven conjectures from previous run.')
 
@@ -464,13 +462,13 @@ def teacher_loop(cfg: DictConfig):
                 for proof_res, hard_theorem in zip(res, hard_theorems):
                     if proof_res.proof:
                         success_count +=1 
-                        usefulness_outcomes.append({
-                            "iteration": i,
-                            "problem": convert_peano_to_lean(hard_theorem.problem, 0, False, cfg.theory.name),
-                            "proof": proof_res.proof,
-                            "used_theorems": list(map(lambda x: x.theorem, theorems_to_check)),
-                            "improvement": proof_res.logprob - hard_theorem.logprob
-                        })
+                        usefulness_outcomes.append(UsefulnessOutcome(
+                            iteration=i,
+                            problem=convert_peano_to_lean(hard_theorem.problem, 0, False),
+                            proof=proof_res.proof,
+                            used_theorems=list(map(lambda x: x.theorem, theorems_to_check)),
+                            improvement=proof_res.logprob - hard_theorem.logprob
+                        ))
                         if proof_res.logprob > hard_theorem.logprob or not cfg.metric_use_logprob:
                             if cfg.metric_use_usage:
                                 for line in proof_res.proof:
@@ -498,15 +496,19 @@ def teacher_loop(cfg: DictConfig):
             
             useful_theorems = useful_theorems[len(useful_theorems)//10:]
             
-            for thm in useful_theorems:
-                if thm.tot_improvement <= 1e-7:
-                    continue
-                thm_arr = list(map(str, thm.theorem.split(" : ")[1:]))
+            if cfg.train_on_usefulness:
+                for thm in useful_theorems:
+                    if thm.tot_improvement <= 1e-7:
+                        continue
+                    thm_arr = list(map(str, thm.theorem.split(" : ")[1:]))
 
-                thm_str = (" : ".join(thm_arr))[:-1]
-                to_add = f'Conj:(useful) ' + permanent_deriv.elaborate(thm_str)
-                if not to_add in examples:
-                    examples.append(to_add)
+                    thm_str = (" : ".join(thm_arr))[:-1]
+                    to_add = f'Conj:(useful) ' + permanent_deriv.elaborate(thm_str)
+                    if not to_add in examples:
+                        if cfg.train_improvement:
+                            conjecture_examples.append(to_add)
+                        else:
+                            examples.append(to_add)
             end_usefulness_time = time.time()
             
             for student_result in student_results:
@@ -524,6 +526,9 @@ def teacher_loop(cfg: DictConfig):
             # 3c- Train model on conjecturing and proof search examples.
             print(len(examples), 'accumulated training examples.')
             agent.train(examples)
+            if cfg.train_improvement:
+                agent.train(conjecture_examples)
+                conjecture_examples = []
             train_end_time = time.time()
             with open("time_metric.txt", "a+") as tm:
                 tm.write(f"Iteration {i}: \n")
@@ -531,7 +536,7 @@ def teacher_loop(cfg: DictConfig):
                 tm.write(f"Proof search took {end_search_time-end_conjecture_time}s\n")
                 tm.write(f"Usefulness check took {end_usefulness_time-end_search_time}s\n")
                 try:
-                    tm.write(f"Total successful usefulness checks: {success_count} / {len(hard_problems)}")
+                    tm.write(f"Total successful usefulness checks: {success_count} / {len(hard_problems)}\n")
                 except Exception:
                     pass
                 tm.write(f"Training took {train_end_time-end_usefulness_time}s\n")
@@ -580,7 +585,6 @@ def teacher_loop(cfg: DictConfig):
             process.close()        
 
 def reprove_conjectures_using_model (cfg: DictConfig, outcomes_filepath: str, model_filepath: str) -> None:
-    num_processes = 6
     exp_dir = os.path.dirname(outcomes_filepath)
     thms: list[ProofOutcome] = []
 
@@ -593,7 +597,7 @@ def reprove_conjectures_using_model (cfg: DictConfig, outcomes_filepath: str, mo
     output_queue: mp.Queue = mp.Queue()
     processes: list[mp.Process] = []
 
-    for j in range(num_processes):
+    for j in range(cfg.num_processes):
         new_process = mp.Process(target=process_main,kwargs={"id": j,
                                                             "cfg": cfg,
                                                             "instruction_queue": instruction_queue, 

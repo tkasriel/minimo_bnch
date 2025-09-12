@@ -2,12 +2,15 @@ import json
 import os
 import matplotlib.pyplot as plt
 
+from classes import UsefulConjectureList
+
 OUTPUT_FOLDER="/home/timothekasriel/minimo/learning/graphs"
 
 def _make_graph (name: str, y_axis: str, labels: list[str], values: list[list[float]], filename: str) -> None:
     fig,ax = plt.subplots()
     ax.set_ylabel(y_axis)
     ax.set_xlabel("Iteration")
+    ax.set_xticks(range(max([len(vals) for vals in values])))
     ax.set_title(name)
     for label, vals in zip(labels, values):
         ax.plot(range(len(vals)), vals, label=label)
@@ -72,6 +75,41 @@ def make_logprob_graph (outcome_filepaths: list[str]) -> None:
         outs.append([s / i for s,i in zip(tot_logprob, instances)])
         exp_names.append(exp_name)
     _make_graph("Average Logprob / Iteration", "Logprob", exp_names, outs, f"logprobs.jpg")
+
+def make_usage_count_graph (exp_folders: list[str]) -> None:
+    usage_counts = []
+    thm_counts = []
+    thm_count_by_it_gen = []
+    exp_names = []
+    for exp_folder in exp_folders:
+        exp_name = os.path.basename(os.path.dirname(exp_folder))
+        pre = lambda x : os.path.join(exp_folder, x)
+        it = 0
+        usage_counts_local = []
+        thm_counts_local = []
+        while True:
+            if not os.path.exists(pre(f"generated_theorems_{it}.json")):
+                break
+            with open (pre(f"generated_theorems_{it}.json")) as f:
+                theorems = UsefulConjectureList.validate_python(json.load(f))
+            usage_counts_local.append(sum([thm.freq_used for thm in theorems]))
+            thm_counts_local.append (len([thm for thm in theorems if thm.freq_used > 0]))
+            it += 1
+        thm_count_by_it_gen_local = [0 for i in range(it)]
+        with open (pre(f"generated_theorems_{it-1}.json")) as f:
+            theorems = UsefulConjectureList.validate_python(json.load(f))
+            for thm in theorems:
+                if thm.freq_used > 0:
+                    thm_count_by_it_gen_local[thm.iter_generated] += 1
+        
+        thm_count_by_it_gen.append(thm_count_by_it_gen_local)
+        usage_counts.append(usage_counts_local[:-1])
+        thm_counts.append(thm_counts_local[:-1])
+        exp_names.append(exp_name)
+    _make_graph("Cummulative Theorem usage count / it", "Count", exp_names, usage_counts, "usage_counts.png")
+    _make_graph("Cummulative # of used theorems / it", "", exp_names, thm_counts, "thm_counts.png")
+    _make_graph("# of generated theorems / it", "", exp_names, thm_count_by_it_gen, "thm_gen.png")
+        
 
 
 def make_graph (outcomes_filepath: str, output_folder: str) -> None:
@@ -147,14 +185,17 @@ def look_at_graph (input_filepath: str) -> None:
 
 if __name__ == "__main__":
     exps = [
-        "/home/timothekasriel/minimo/learning/outputs/line19/outcomes_9.json",
+        # "/home/timothekasriel/minimo/learning/outputs/line19/outcomes_9.json",
         # "/home/timothekasriel/minimo/learning/outputs/line18/outcomes_9.json",
         # "/home/timothekasriel/minimo/learning/outputs/line15/outcomes_9.json",
         # "/home/timothekasriel/minimo/learning/outputs/line10/outcomes_9.json"
+        "/home/timothekasriel/minimo/learning/outputs/line25/",
+        # "/home/timothekasriel/minimo/learning/outputs/line29/outcomes_9.json",
         ]
-    make_success_rate_graph(exps)
-    make_variable_use_count_graph(exps)
-    make_logprob_graph(exps)
+    make_usage_count_graph(exps)
+    # make_success_rate_graph(exps)
+    # make_variable_use_count_graph(exps)
+    # make_logprob_graph(exps)
 
 
 

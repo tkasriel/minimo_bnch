@@ -880,8 +880,12 @@ class MonteCarloTreeSearch(Policy):
                 leaf.mark_solved()
                 self._backpropagate_reward(leaf, 1)
                 continue
-
+            st2_time = time.time()
             leaf.expand(cfg)
+            end2_time = time.time()
+            if end2_time - st2_time > 20:
+                with open("long_expand_times.txt", "a+") as f:
+                    f.write(str(end2_time-st2_time) + "\n")
 
             if self._use_default_policy and self._default_policy:
                 self._default_policy.initialize(cfg, leaf)

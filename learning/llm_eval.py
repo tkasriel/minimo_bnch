@@ -1,3 +1,4 @@
+import ast
 import asyncio
 import json
 import os
@@ -11,9 +12,10 @@ from openai import AsyncOpenAI
 import dotenv
 from pydantic import BaseModel
 import tqdm
-from tqdm.asyncio import tqdm_asyncio
+from z3.z3 import Int, Implies, Solver, solve, And, Not
 
-from convert_to_lean import convert_peano_to_lean
+from classes import ProofOutcomeList, UsefulConjecture, UsefulConjectureList, UsefulnessOutcomeList
+from convert_to_lean import _find_atoms, convert_peano_to_lean
 
 if not dotenv.load_dotenv():
     raise ValueError("Need to set api key in .env")
@@ -52,9 +54,9 @@ class LLMUsefulnessEvalResult (BaseModel):
             f.write("\n============\n\n".join(map(str, self.proven_deduplicated)))
         
         with open(add_pre("useful_theorems.json"), "w") as f:
-            f.write(str([x.model_dump_json() for x in self.useful_theorems]))
+            json.dump([x.model_dump_json() for x in self.useful_theorems], f)
         with open(add_pre("useful_theorem_dedup.json"), "w") as f:
-            f.write(str([x.model_dump_json() for x in self.deduplicated_theorems]))
+            json.dump([x.model_dump_json() for x in self.deduplicated_theorems], f)
     
     def extend (self, other: "LLMUsefulnessEvalResult") -> None:
         self.useful_theorems.update(other.useful_theorems)
@@ -221,6 +223,102 @@ def _extract_theorems_from_explanation_file (explanation_file: str) -> list[Theo
                                        explanations = ["\n".join(l[1:])])) #TODO: fix
     return out
 
+def _what_if_usage_only_metrics (exp_folder: str, it: int) -> tuple[int, int]:
+    theorems: list[UsefulConjecture] = []
+    pre = lambda x : os.path.join(exp_folder, x)
+    with open (pre(f"usefulness_outcomes_{it}.json")) as f:
+        outcomes = UsefulnessOutcomeList.validate_python(json.load(f))
+    
+    theorem_names = set()
+    total_usage = 0
+    for outcome in outcomes:
+        if outcome.proof:
+            for line in outcome.proof:
+                if "by c" in line or "apply c" in line:
+                    name = line.split()[-1]
+                    theorem_names.add(name)
+                    total_usage += 1
+    return total_usage, len(theorem_names)
+
+def _fix_eval_metrics (exp_folder: str, it: int) -> tuple[int, int]:
+    
+    pre = lambda x : os.path.join(exp_folder, x)
+    # with open (pre(f"outcomes_{it}.json")) as f:
+    #     outcomes = ProofOutcomeList.validate_python(json.load(f))
+    with open (pre(f"generated_theorems_{it}.json")) as f:
+        theorems = UsefulConjectureList.validate_python(json.load(f))
+    for thm in theorems:
+        thm.freq_used = 0
+        thm.tot_improvement = 0
+        thm_def = " : ".join(thm.theorem.split(" : ")[1:])
+    
+    with open(pre(f"usefulness_outcomes_{it}.json")) as f:
+        u_outcomes = UsefulnessOutcomeList.validate_python(json.load(f))
+    for outcome in u_outcomes:
+        if outcome.improvement > 0:
+            for line in outcome.proof:
+                for thm in theorems:
+                    thm_name = thm.theorem.split(" : ")[0]
+                    if thm_name in line:
+                        thm.freq_used += 1
+                        thm.tot_improvement += outcome.improvement
+                        break
+    return sum([thm.freq_used for thm in theorems]), len([thm for thm in theorems if thm.freq_used > 0])
+
+def _smt_prove (theorem: Theorem) -> bool:
+    variables = dict()
+    def _convert_to_smt(thm_str: str):
+        """ Convert lean to SMT. Is good for naturals, maybe not for prop logic/group theory
+        """
+        nonlocal variables
+        if thm_str[0] == "(": 
+            thm_str = thm_str[1:-1]
+            
+            atoms = _find_atoms (thm_str)
+            if atoms[0] == "Nat.succ":
+                return 1 + _convert_to_smt(atoms[1])
+            if atoms[1] == "->":
+                rest = ' '.join(atoms[2:])
+                if "->" in rest:
+                    rest = "(" + rest + ")"
+                
+                if ": Nat" in atoms[0]:
+                    varname = atoms[0].split()[0][1:]
+                    variables[varname] = Int(varname)
+                    return _convert_to_smt(rest)
+                else:
+                    # First atom will be of the form (vX : <hypothesis>), when we want it to be (<hypothesis>)
+                    hyp = " : ".join(atoms[0][1:-1].split(" : ")[1:])
+                    return Implies(_convert_to_smt(hyp), _convert_to_smt(rest))
+            if atoms[1] == "*":
+                return _convert_to_smt(atoms[0]) * _convert_to_smt(atoms[2])
+            if atoms[1] == "+":
+                return _convert_to_smt(atoms[0]) + _convert_to_smt(atoms[2])
+            if atoms[1] == "=":
+                return _convert_to_smt(atoms[0]) == _convert_to_smt(atoms[2])
+        else:
+            # this is either a number or a variable.
+            if thm_str in variables:
+                return variables[thm_str]
+            # else:
+                # print(f"Not a variable: {thm_str}") # Check manually that I'm not accidentally losing variables
+            if thm_str == "False":
+                return False
+            if thm_str == "True":
+                return True
+            return int(thm_str)
+
+
+
+    to_solve = Not(_convert_to_smt(theorem.thm_string_simple))
+    # print(to_solve)
+    for varname in variables:
+        to_solve = And(to_solve, variables[varname] >= 0)
+    s = Solver()
+    s.add(to_solve)
+    res = s.check()
+    return res.r == -1
+
 
 async def run_evaluation_at_k (outcomes_filepath: str, output_folder_path: str, k: int = 1) -> None:
     os.makedirs(output_folder_path, exist_ok = True)
@@ -281,7 +379,7 @@ async def run_evaluation_at_k (outcomes_filepath: str, output_folder_path: str, 
         iteration_results[i] = [len(local_results.useful_theorems), len(local_results.deduplicated_theorems), len(local_results.proven_deduplicated)]
         out.extend(local_results)
     print(iteration_results)
-    exp_name = os.path.dirname(output_folder_path)
+    exp_name = os.path.basename(output_folder_path)
     averages = np.average(iteration_results, 0)
     var = np.sqrt(np.var(iteration_results, 0))
     print (f"Results for {exp_name}:")
@@ -334,20 +432,31 @@ def get_reproof_values (output_folder_path: str) -> None:
     print (f"Found theorems {count}/{len(useful_theorems)}") # Note: count can be larger than useful_theorems. This is because the model is allowed to conjecture the same theorem multiple times if it failed the proof.
     print (f"Proven theorems: {len(intersect)}/{(len(useful_theorems))} ({len(intersect) - len(old_proven_theorems)} improvement)")
 
-def get_evaluation_metrics (exp_folder: str) -> None:
+def get_fix_evaluation_metrics (exp_folder: str, it: int = 9) -> None:
     add_pre = lambda file : os.path.join(exp_folder, file)
-    with open(add_pre("outcomes_15.json")) as f:
-        outcomes = json.load(f)
-    correct_proof_count = len([o for o in outcomes if o["proof"] and not o["hindsight"]])
-    with open (add_pre("generated_theorems_15.json")) as f:
+    with open(add_pre(f"outcomes_{it}.json")) as f:
+        outcomes = ProofOutcomeList.validate_python(json.load(f))
+    correct_proof_count = len([o for o in outcomes if o.proof and not o.hindsight])
+    with open (add_pre(f"generated_theorems_{it}.json")) as f:
         generated_theorems = json.load(f)
-    total_use_count = sum([int(gt["freq_used"]) for gt in generated_theorems])
-    number_of_theorems = len([1 for gt in generated_theorems if int(gt["freq_used"])])
+    
+    inc_total_use_count = sum([int(gt["freq_used"]) for gt in generated_theorems])
+    inc_number_of_theorems = len([1 for gt in generated_theorems if int(gt["freq_used"])])
     exp_name = os.path.basename(exp_folder)
-    print (f"Results for {exp_name}:")
+    total_use_count, number_of_theorems = _fix_eval_metrics (exp_folder, it)
+    usage_use_count, usage_theorem_count = _what_if_usage_only_metrics (exp_folder, it)
+
+    print (f"Results for {exp_name} (iteration {it}):")
     print (f"Number of proven conjectures: {correct_proof_count}")
-    print (f"Total theorem useage count: {total_use_count}")
-    print (f"Number of useful theorems: {number_of_theorems}")
+    print (f"(I) Total theorem usage count: {inc_total_use_count}")
+    print (f"(I) Number of useful theorems: {inc_number_of_theorems}")
+    print (f"(C) Total theorem usage count: {total_use_count}")
+    print (f"(C) Number of useful theorems: {number_of_theorems}")
+    print (f"If we were to only consider usage...")
+    print (f"(U) Total theorem usage count: {usage_use_count}")
+    print (f"(U) Number of useful theorems: {usage_theorem_count}")
+    print (f"{number_of_theorems} | {total_use_count} | {usage_theorem_count} | {usage_use_count}")
+    print()
 def count_its (filename: str) -> None:
     with open(filename) as f:
         lines = f.readlines()
@@ -360,32 +469,88 @@ def count_its (filename: str) -> None:
                 counts[it] += 1
     print(counts)
 
+def reproof_using_smt (exp_folder: str, k=5) -> None:
+    pre = lambda x: os.path.join(exp_folder, x)
+    with open(pre("useful_theorem_dedup.json")) as f:
+        data_str = f.read()
+
+        list_of_json_strings = ast.literal_eval(data_str)
+
+        # Step 2: parse each JSON string into a dict
+        data = [json.loads(item) for item in list_of_json_strings]
+        useful_theorems_tmp = [Theorem.model_validate(thm) for thm in data]
+    results = []
+    len_useful = []
+    for it in range(k):
+        useful_theorems = []
+        for thm in useful_theorems_tmp:
+            # Extract results from one run
+            response = thm.explanations[it]
+            if ("USEFUL" in response.split("\n")[-1]) and ("NOT" not in response.split("\n")[-1]):
+                useful_theorems.append(thm)
+        len_useful.append(len(useful_theorems))
+        proven = []
+        for useful_theorem in useful_theorems:
+            if _smt_prove(useful_theorem):
+                proven.append(useful_theorem)
+        results.append(len(proven))
+    print(f"Deduplicated conjectures: {np.average(len_useful)}, std {np.sqrt(np.var(len_useful))}")
+    print(f"Proven conjectures: {np.average(results)}, std {np.sqrt(np.var(results))}")
+        
 
 
 
 if __name__ == "__main__":
     exp_folders = [
-        # "/home/timothekasriel/minimo/learning/outputs/line18_2",
-        # "/home/timothekasriel/minimo/learning/outputs/line18_buggy",
-        # "/home/timothekasriel/minimo/learning/outputs/line19_2",
-        # "/home/timothekasriel/minimo/learning/outputs/line21",
-        # "/home/timothekasriel/minimo/learning/outputs/line22",
-        # "/home/timothekasriel/minimo/learning/outputs/line23",
-        # "/home/timothekasriel/minimo/learning/outputs/line24",
-        # "/home/timothekasriel/minimo/learning/outputs/line25",
+        # "/home/timothekasriel/minimo/learning/outputs/line10",
+        # "/home/timothekasriel/minimo/learning/outputs/favor_conj_seed",
+        # "/home/timothekasriel/minimo/learning/outputs/limit_proofsearch_space_5_2",
+        # "/home/timothekasriel/minimo/learning/outputs/line15",
+        # "/home/timothekasriel/minimo/learning/outputs/line16",
+        "/home/timothekasriel/minimo/learning/outputs/line18_2",
+        "/home/timothekasriel/minimo/learning/outputs/line19_2",
+        "/home/timothekasriel/minimo/learning/outputs/line21",
+        "/home/timothekasriel/minimo/learning/outputs/line22",
+        "/home/timothekasriel/minimo/learning/outputs/line23",
+        "/home/timothekasriel/minimo/learning/outputs/line24",
+        "/home/timothekasriel/minimo/learning/outputs/line25",
         "/home/timothekasriel/minimo/learning/outputs/line27",
-        "/home/timothekasriel/minimo/learning/outputs/line29"
+        "/home/timothekasriel/minimo/learning/outputs/line30",
+        "/home/timothekasriel/minimo/learning/outputs/line31",
+        "/home/timothekasriel/minimo/learning/outputs/line32",
+        "/home/timothekasriel/minimo/learning/outputs/line33",
+        # "/home/timothekasriel/minimo_org/learning/outputs/filtered"
     ]
-    OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/line29"
+    OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/line27"
     # count_its("/home/timothekasriel/minimo/learning/outputs/line18/useful_theorems.txt")
     # print (f"Current evaluation: {os.path.basename(OUTPUT_FOLDER)}")
     # print(get_reproof_values(OUTPUT_FOLDER))
 
-    # asyncio.run(run_evaluation_at_k(os.path.join(OUTPUT_FOLDER, "outcomes_5.json"), OUTPUT_FOLDER, 5))
+    # get_fix_evaluation_metrics(OUTPUT_FOLDER, it=8)
+    # _smt_prove(Theorem(thm_string="",iteration=-1,proven=True,logprob=0.0,thm_string_simple="((v0 : Nat) -> (v1 : Nat) -> (v2 : (((1 * v0) * 1) = v0)) -> (((1 * ((1 * ((1 * v0) * (Nat.succ 0))) * 1)) * 1) = (v0 + 1)))"))
+    for exp in exp_folders:
+        print(f"Experiment: {exp}")
+        try:
+            reproof_using_smt(exp)
+        except:
+            continue
+    # asyncio.run(run_evaluation_at_k(os.path.join(OUTPUT_FOLDER, "outcomes_8.json"), OUTPUT_FOLDER, 5))
+
     # asyncio.run(run_evaluation_at_k(os.path.join(OUTPUT_FOLDER, "outcomes_9.json"), OUTPUT_FOLDER, 5))
-    for exp_folder in exp_folders:
-        get_evaluation_metrics(exp_folder)
-        # asyncio.run(run_evaluation_at_k(os.path.join(exp_folder, "outcomes_5.json"), exp_folder, 5))
+    # for it in range(1,20):
+    
+    # get_fix_evaluation_metrics(OUTPUT_FOLDER, it=14)
+    # get_evaluation_metrics("/home/timothekasriel/minimo/learning/outputs/line9", it=5)
+    # for exp_folder in exp_folders:
+    #     try:
+    #         get_fix_evaluation_metrics(exp_folder, it=14)
+    #     except:
+    #         pass
+    #     try:
+    #         get_fix_evaluation_metrics(exp_folder, it=9)
+    #     except:
+    #         get_fix_evaluation_metrics(exp_folder, it=4)
+    #     asyncio.run(run_evaluation_at_k(os.path.join(exp_folder, "outcomes_5.json"), exp_folder, 5))
     # asyncio.run(remove_dedup_fix(OUTPUT_FOLDER))
     # send_batch_evaluation("/Users/tkasriel/code/rsh/minimo/learning/outputs/orig_minimo/outcomes_arith.json", OUTPUT_FOLDER, "Original Minimo Arithmetic Evaluation")
     # list_batch_evaluations(OUTPUT_FOLDER)

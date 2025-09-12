@@ -36,6 +36,13 @@ class ProofOutcome (BaseModel):
     hindsight: bool
     seed_used: str | None = None
 
+class UsefulnessOutcome (BaseModel):
+    iteration: int
+    problem: str
+    proof: list
+    used_theorems: list
+    improvement: float
+
 class UsefulConjecture (BaseModel):
     theorem: str
     iter_generated: int
@@ -44,4 +51,5 @@ class UsefulConjecture (BaseModel):
 
 
 ProofOutcomeList = TypeAdapter(List[ProofOutcome])
+UsefulnessOutcomeList = TypeAdapter(List[UsefulnessOutcome])
 UsefulConjectureList = TypeAdapter(List[UsefulConjecture])
