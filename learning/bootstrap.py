@@ -464,7 +464,7 @@ def teacher_loop(cfg: DictConfig):
                         success_count +=1 
                         usefulness_outcomes.append(UsefulnessOutcome(
                             iteration=i,
-                            problem=convert_peano_to_lean(hard_theorem.problem, 0, False),
+                            problem=convert_peano_to_lean(hard_theorem.problem, 0, False, cfg.theory.name),
                             proof=proof_res.proof,
                             used_theorems=list(map(lambda x: x.theorem, theorems_to_check)),
                             improvement=proof_res.logprob - hard_theorem.logprob
