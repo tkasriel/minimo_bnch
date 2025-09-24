@@ -29,7 +29,7 @@ def _find_atoms (line: str) -> list[str]:
 
 
 def _handle_singleton(text: str) -> str:
-    if text.isnumeric() or text in ["Nat", ":", "->", "→", "false", "true", "Prop", "G"]:
+    if text.isnumeric() or text in ["Nat", ":", "->", "→", "false", "true", "Prop", "Group"]:
         return text
     global vars, uses, currvar
     if text in vars:
@@ -132,7 +132,7 @@ def convert_group(conjecture: str, it: int, simplify: bool = True) -> str | bool
     currvar = 0
 
     og_conj = conjecture
-    conjecture = conjecture.replace("op", "•").replace("id", "1").replace("'", "").replace("[", "(").replace("]", ")")
+    conjecture = conjecture.replace("op", "•").replace("id", "1").replace("'", "").replace("[", "(").replace("]", ")").replace("G", "Group")
     out, flag = _convert (conjecture, simplify=simplify)
     
     return out

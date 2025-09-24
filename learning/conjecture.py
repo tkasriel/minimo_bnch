@@ -413,17 +413,9 @@ def sample_conjecture(cfg, lm: "AgentLM", context, previous_conjectures: list[st
         tokens = tokenize(generation)
         node, _, completions = Conjecture.parse(tokens, context.clone(), seed)
         if node:
-            # ex: 
-            # generation =          [('a0: (= z z)) -> (= o o)]
-            # generation_no_seed =  (= o o)]
-            # if not ":" in generation_no_seed and generation_no_seed[-1] == "]":
-            #     return generation_no_seed[:-1]
-            # if ":" in generation_no_seed and generation_no_seed[0] != "[":
-            #     return "[" + generation_no_seed
             if has_trivial_outcome(generation) and cfg.trivial_filtering:
                 generation = seed if seed else ''
                 continue
-            #else:
             return generation
         
         completions = list(set(space_completions(generation, completions)))
@@ -474,7 +466,6 @@ def sample_conjecture(cfg, lm: "AgentLM", context, previous_conjectures: list[st
             generation += choice
             # Filter completions to those starting with the chosen character and drop the character.
             completions = [c[1:] for c in completions if c.startswith(choice)]
-            # print(generation)
 
     return None
 

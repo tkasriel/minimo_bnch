@@ -1360,7 +1360,7 @@ def test_proof_search(problemset='lean-library-logic',
 
 def make_agent(config) -> ProofSearchAgent:
     if config.get('agent_path'):
-        agent = torch.load(config['agent_path'])
+        agent = torch.load(config['agent_path'], weights_only=False)
     elif config.agent.get('type') == 'curiosity':
         import pretraining
         agent = pretraining.CuriosityGuidedProofSearchAgent(config.agent)
@@ -1397,7 +1397,7 @@ def evaluate_agent(config: DictConfig, agent=None, add_to_library:bool = False) 
     for problem in problemset.problem_names()[begin:end]:
         print('Attempting problem:', problem)
         try:
-            result = agent.proof_search(problem, problemset.initialize_problem(problem))
+            result = agent.proof_search(config, problem, problemset.initialize_problem(problem))
         except KeyboardInterrupt:
             raise
         except:

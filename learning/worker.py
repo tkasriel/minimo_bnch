@@ -93,7 +93,7 @@ def try_prove(cfg, agent: ProofSearchAgent, theory: BackgroundTheory, statement:
             agent_result.examples,
             hindsight_examples,
             agent_result.iterations,
-            logprob,
+            logprob or 0.0,
         )
     except BaseException as e:
         if type(e) == KeyboardInterrupt:
@@ -102,4 +102,4 @@ def try_prove(cfg, agent: ProofSearchAgent, theory: BackgroundTheory, statement:
         print('Error in try_prove!')
         print("".join(tb))
         return StudentResult("\n".join(tb), False, statement, None, None, [],
-                             None, None, None)
+                             [], -1, 0.0)

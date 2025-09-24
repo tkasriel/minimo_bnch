@@ -2,7 +2,6 @@ import ast
 import asyncio
 import json
 import os
-import random
 import re
 import sys
 import time
@@ -12,9 +11,11 @@ from openai import AsyncOpenAI
 import dotenv
 from pydantic import BaseModel
 import tqdm
-from z3.z3 import Int, Implies, Solver, solve, And, Not
+import tqdm.asyncio
+from z3.z3 import ArithRef, Bool, Int, Implies, Or, Solver, solve, And, Not
+import json
 
-from classes import ProofOutcomeList, UsefulConjecture, UsefulConjectureList, UsefulnessOutcomeList
+from classes import ProofOutcomeList, UsefulConjecture, UsefulConjectureList, UsefulnessOutcomeList, LLMUsefulnessEvalResult, LLMUsefulnessEvalTheorem
 from convert_to_lean import _find_atoms, convert_peano_to_lean
 
 if not dotenv.load_dotenv():
@@ -23,48 +24,9 @@ print (f"OPENAI API KEY: {os.getenv('OPENAI_API_KEY')}")
 client = AsyncOpenAI()
 MODEL = "gpt-4.1"
 
-class Theorem(BaseModel):
-    thm_string: str
-    iteration: int
-    proven: bool
-    logprob: float
-    thm_string_simple: str
-    thm_org: str | None = None
-    explanations: list[str] = []
-    def __str__(self) -> str:
-        return f"{self.thm_string} (iteration {self.iteration}) : {self.logprob} -- {self.thm_org or ''}\n\n" + "\n#####\n".join(self.explanations)
-    def __hash__(self) -> int:
-        return (self.thm_string + " -- " + (self.thm_org or "")).__hash__()
-
-    def __eq__(self, other: object) -> bool:
-        return self.__hash__() == other.__hash__()
-    
-class LLMUsefulnessEvalResult (BaseModel):
-    useful_theorems: set[Theorem] = set()
-    deduplicated_theorems: set[Theorem] = set()
-    proven_deduplicated: set[Theorem] = set()
-
-    def dump_to_folder (self, folder_path: str) -> None:
-        add_pre = lambda filepath : os.path.join(folder_path, filepath)
-        with open(add_pre("useful_theorems.txt"), "w") as f:
-            f.write("\n============\n\n".join(map(str, self.useful_theorems)))
-        with open(add_pre("useful_theorem_dedup.txt"), "w") as f:
-            f.write("\n============\n\n".join(map(str, self.deduplicated_theorems)))
-        with open(add_pre("useful_theorem_dedup_proven.txt"), "w") as f:
-            f.write("\n============\n\n".join(map(str, self.proven_deduplicated)))
-        
-        with open(add_pre("useful_theorems.json"), "w") as f:
-            json.dump([x.model_dump_json() for x in self.useful_theorems], f)
-        with open(add_pre("useful_theorem_dedup.json"), "w") as f:
-            json.dump([x.model_dump_json() for x in self.deduplicated_theorems], f)
-    
-    def extend (self, other: "LLMUsefulnessEvalResult") -> None:
-        self.useful_theorems.update(other.useful_theorems)
-        self.deduplicated_theorems.update(other.deduplicated_theorems)
-        self.proven_deduplicated.update(other.proven_deduplicated)
         
 
-def _extract_theorems_from_outcomes(outcomes_filepath: str, include_hindsight: bool = False, include_unproven: bool = False, theory_name: str = "") -> list[Theorem]:
+def _extract_theorems_from_outcomes(outcomes_filepath: str, include_hindsight: bool = False, include_unproven: bool = False, theory_name: str = "") -> list[LLMUsefulnessEvalTheorem]:
     with open(outcomes_filepath) as f:
         outcomes = json.load(f)
     results = []
@@ -73,16 +35,16 @@ def _extract_theorems_from_outcomes(outcomes_filepath: str, include_hindsight: b
             continue
         if not o.get("proof", False) and not include_unproven:
             continue
-        if "problem_translated" not in o.keys():
+        # if "problem_translated" not in o.keys():
             # Old non-translated problems, pre-dsprover
-            o["problem_translated"] = convert_peano_to_lean(o["problem"], i, simplify=True, theory_string = theory_name)
+        o["problem_translated"] = convert_peano_to_lean(o["problem"], i, simplify=True, theory_string = theory_name)
         # if i == 2815:
         #     print(o)
         #     sys.exit(0)
         if o["logprob"] is None:
             o["logprob"] = 1.0
         thm_str = f"theorem problem{i} : {o['problem_translated']}"
-        results.append(Theorem(thm_string=thm_str,
+        results.append(LLMUsefulnessEvalTheorem(thm_string=thm_str,
                                 proven=bool(o["proof"]),
                                 thm_org=o["problem"],
                                 thm_string_simple=o["problem_translated"],
@@ -105,14 +67,15 @@ o_s : Nat.succ 0 = 1.
 *_s : (n : Nat) -> (m : Nat) -> n * (Nat.succ m) = n + n * m.
 nat_ind : (p : (Nat -> Prop)) -> (p z) -> ((n : Nat) -> (p n) -> p (Nat.succ n)) -> (n : Nat) -> (p n)."""
     elif("group" in theory_name):
-        known_theorems = """G : type.
-• : [G -> G -> G].
-1 : G.
+        known_theorems = """
+Group : type.
+• : [Group -> Group -> Group].
+1 : Group.
 
-op_assoc : (v0 : G) -> (v1 : G) -> (v2 : G) -> (((v0 • v1) • v2) = (v0 • (v1 • v2))).
-op_comm : (v0 : G) -> (v1 : G) -> ((v0 • v1) = (v1 • v0)).
+op_assoc : (v0 : Group) -> (v1 : Group) -> (v2 : Group) -> (((v0 • v1) • v2) = (v0 • (v1 • v2))).
+op_comm : (v0 : Group) -> (v1 : Group) -> ((v0 • v1) = (v1 • v0)).
 id_1 : (1 • v0) = v0).
-inv_1 : (v0 : G) -> (((v0⁻¹) • v0) = 1).
+inv_1 : (v0 : Group) -> (((v0⁻¹) • v0) = 1).
 """
     elif ("prop" in theory_name):
         known_theorems = """Prop : type.
@@ -141,8 +104,8 @@ em : ((v0 : Prop) → (v0 ∨ (¬ v0)))
     prompt = f"""You are tasked to judge whether a given lean theorem could be considered useful for an automatic theorem prover to have among its known theorems.
 This theorem prover has only access to the following axioms and known theorems:
 ```
-```
 {known_theorems}
+```
 As well as access to the `rfl` and `rewrite` commands
 Here is the theorem you are to evaluate
 ```lean4
@@ -151,6 +114,15 @@ Here is the theorem you are to evaluate
 Think through the problem step by step. Translate the problem into natural language, then think of what the possible uses of the theorem could be, whether it's obviously true and whether it means something.
 On the last line, say either USEFUL or NOT USEFUL and nothing else.
 """
+    if theory_name == 'groups':
+        prompt += """Note: you can ignore irrelevant hypotheses. For example, the following theorems would not be considered useful.
+theorem problem1 : ((v0 : Group) -> (v0 = (v0 • 1)))
+theorem problem2 : ((v0 : Group) -> ((v0 • 1) = v0))
+theorem problem3 : ((v0 : (1 = 1)) -> (1 = (1 • 1)))
+
+As the first two are rewrites of axiom id_1
+Problem 3 has an irrelevant hypothesis so we can ignore it, but more importantly has a straighforward application of id_1: By running id_1 1, we get this exact theorem, so it's not useful.
+"""
     chats = [[
         {"role": "developer", "content": "You are an expert at evaluating lean theorems"},
         {"role": "user", "content": prompt.format(theorem)}
@@ -158,8 +130,34 @@ On the last line, say either USEFUL or NOT USEFUL and nothing else.
     return chats
 
 
-async def _remove_dedup (useful_theorems: list[Theorem]) -> tuple[list[Theorem], tuple[str, str]]:
-    prompt = """I have a set of lean theorems, some of which are very similar to each other. I want to use them as tactics for proof generation. 
+async def _remove_dedup (useful_theorems: list[LLMUsefulnessEvalTheorem], theory_name: str = "nat-mul") -> tuple[list[LLMUsefulnessEvalTheorem], tuple[str, str]]:
+    if theory_name == "groups":
+        prompt = """I have a set of lean theorems, some of which are very similar to each other. I want to use them as lemmas for proof generation. 
+Please remove the duplicates, so that I can have a list of only unique theorems.
+For example, the following four theorems would be duplicates of each other:
+```lean4
+theorem problem1 : ((v0 : Group) -> (v1 : (v0 = (v0 • (1⁻¹)))) -> ((1⁻¹) = 1))
+theorem problem2 : ((v0 : Group) -> (v1 : Group) -> ((1⁻¹) = 1))
+theorem problem3 : ((v0 : Group) -> ((1⁻¹) = 1))
+theorem problem4 : ((v0 : Group) -> (1 = (1⁻¹))
+```
+Problem 1 introduces an irrelevant hypothesis as compared to problem 3, as it makes no mention of v0 in its final claim. Therefore, these two problems are duplicates of each other.
+Problem 2 is a similar case to problem 1: It introduces an extra variable, but does nothing with it. This is irrelevant, and makes for the same problem.
+Problem 4 is the same as problem 3, but is flipped. As we are running this using rw, we can simply call this problem in the inverse direction, so these two lemmas are the same.
+
+In this case, our final result would likely be:
+```lean4
+theorem problem3 : ((v0 : Group) -> ((1⁻¹) = 1))
+```
+
+Here is my list of theorems for you to remove duplicates for. 
+{}
+I also have attached an explanation for why each could be useful for a theorem prover.
+{}
+Think it through step by step, and then return the list of unique theorems from this list in a list format inside of a ```lean4``` code block. Make sure your answer is inside the very last lean codeblock. Please make sure to repeat the theorems exactly as I wrote them.
+"""
+    else:
+        prompt = """I have a set of lean theorems, some of which are very similar to each other. I want to use them as tactics for proof generation. 
 Please remove the duplicates, so that I can have a list of only unique theorems.
 For example, the following four theorems would be duplicates of each other:
 ```lean4
@@ -189,7 +187,7 @@ Think it through step by step, and then return the list of unique theorems from 
     res = completion.choices[0].message.content
     assert res
     res_theorems: str = re.findall(r'(?s)```lean.*```', res)[-1]
-    outs: set[Theorem] = set()
+    outs: set[LLMUsefulnessEvalTheorem] = set()
     for res_thm in res_theorems.split('\n'):
         if '```' in res_thm:
             continue
@@ -197,31 +195,6 @@ Think it through step by step, and then return the list of unique theorems from 
             if res_thm == ut.thm_string:
                 outs.add(ut)
     return list(outs), (res_theorems, res)
-
-def _extract_theorems_from_explanation_file (explanation_file: str) -> list[Theorem]:
-    out = []
-    with open (explanation_file) as f:
-        lines = ("\n".join(f.readlines())).split("============")
-    for l in lines:
-        l_org = l[:]
-        l = [line for line in l.split('\n') if line.strip()]
-        if not l:
-            continue
-        theorem_name = l[0].split(" (iteration ")[0]
-        theorem_name_simple = " : ".join(theorem_name.split(" : ")[1:])
-        try:
-            it = int((l[0].split(" (iteration ")[1])[0])
-        except: 
-            it = -1 # temp fix
-        logprob = float(l[0].split(" : ")[-1])
-
-        out.append(Theorem(thm_string=theorem_name,
-                                       thm_string_simple=theorem_name_simple,
-                                       proven=True,
-                                       iteration=it,
-                                       logprob=logprob,
-                                       explanations = ["\n".join(l[1:])])) #TODO: fix
-    return out
 
 def _what_if_usage_only_metrics (exp_folder: str, it: int) -> tuple[int, int]:
     theorems: list[UsefulConjecture] = []
@@ -265,7 +238,7 @@ def _fix_eval_metrics (exp_folder: str, it: int) -> tuple[int, int]:
                         break
     return sum([thm.freq_used for thm in theorems]), len([thm for thm in theorems if thm.freq_used > 0])
 
-def _smt_prove (theorem: Theorem) -> bool:
+def _smt_prove (theorem: LLMUsefulnessEvalTheorem) -> bool:
     variables = dict()
     def _convert_to_smt(thm_str: str):
         """ Convert lean to SMT. Is good for naturals, maybe not for prop logic/group theory
@@ -277,15 +250,24 @@ def _smt_prove (theorem: Theorem) -> bool:
             atoms = _find_atoms (thm_str)
             if atoms[0] == "Nat.succ":
                 return 1 + _convert_to_smt(atoms[1])
-            if atoms[1] == "->":
+            if atoms[0] == "¬":
+                return Not(_convert_to_smt(atoms[1]))
+            if atoms[1] == "->" or atoms[1] == "→":
                 rest = ' '.join(atoms[2:])
-                if "->" in rest:
+                if "->" in rest or "→" in rest:
                     rest = "(" + rest + ")"
                 
                 if ": Nat" in atoms[0]:
                     varname = atoms[0].split()[0][1:]
                     variables[varname] = Int(varname)
                     return _convert_to_smt(rest)
+                elif ": Prop" in atoms[0]:
+                    varname = atoms[0].split()[0][1:]
+                    variables[varname] = Bool(varname)
+                    return _convert_to_smt(rest)
+                elif ": G" in atoms[0]:
+                    varname = atoms[0].split()[0][1:]
+                    variables[varnae] = Group()
                 else:
                     # First atom will be of the form (vX : <hypothesis>), when we want it to be (<hypothesis>)
                     hyp = " : ".join(atoms[0][1:-1].split(" : ")[1:])
@@ -294,26 +276,39 @@ def _smt_prove (theorem: Theorem) -> bool:
                 return _convert_to_smt(atoms[0]) * _convert_to_smt(atoms[2])
             if atoms[1] == "+":
                 return _convert_to_smt(atoms[0]) + _convert_to_smt(atoms[2])
-            if atoms[1] == "=":
+            if atoms[1] == "=" or atoms[1] == "↔":
                 return _convert_to_smt(atoms[0]) == _convert_to_smt(atoms[2])
+            if atoms[1] == "∧":
+                return And(_convert_to_smt(atoms[0]), _convert_to_smt(atoms[2]))
+            if atoms[1] == "∨":
+                return Or(_convert_to_smt(atoms[0]), _convert_to_smt(atoms[2]))
+        
+
         else:
             # this is either a number or a variable.
             if thm_str in variables:
                 return variables[thm_str]
             # else:
                 # print(f"Not a variable: {thm_str}") # Check manually that I'm not accidentally losing variables
-            if thm_str == "False":
+            if thm_str == "false":
                 return False
-            if thm_str == "True":
+            if thm_str == "true":
                 return True
             return int(thm_str)
 
 
-
-    to_solve = Not(_convert_to_smt(theorem.thm_string_simple))
+    try:
+        to_solve = Not(_convert_to_smt(theorem.thm_string_simple))
+    except:
+        print("help")
+        to_solve = Not(_convert_to_smt(theorem.thm_string_simple))
     # print(to_solve)
     for varname in variables:
-        to_solve = And(to_solve, variables[varname] >= 0)
+        if isinstance(variables[varname], ArithRef):
+            to_solve = And(to_solve, variables[varname] >= 0)
+        else:
+            to_solve = And(to_solve)
+
     s = Solver()
     s.add(to_solve)
     res = s.check()
@@ -335,7 +330,7 @@ async def run_evaluation_at_k (outcomes_filepath: str, output_folder_path: str, 
 
     print(f"Detected theory: {theory_name}")
 
-    theorem_list: list[Theorem] = _extract_theorems_from_outcomes(outcomes_filepath, include_unproven=True, theory_name = theory_name)
+    theorem_list: list[LLMUsefulnessEvalTheorem] = _extract_theorems_from_outcomes(outcomes_filepath, include_unproven=True, theory_name = theory_name)
     prompt_list = _make_prompts([t.thm_string for t in theorem_list], theory_name = theory_name)
     out = LLMUsefulnessEvalResult()
 
@@ -375,10 +370,19 @@ async def run_evaluation_at_k (outcomes_filepath: str, output_folder_path: str, 
             if "NOT" not in response.split("\n")[-1]:
                 local_results.useful_theorems.add(theorem)
         local_results.deduplicated_theorems = set((await _remove_dedup(list(local_results.useful_theorems)))[0])
+        for dedup_thm in local_results.deduplicated_theorems:
+            if not dedup_thm.dedup_useful_at_k:
+                dedup_thm.dedup_useful_at_k = [False] * k
+            dedup_thm.dedup_useful_at_k[i] = True
         local_results.proven_deduplicated = set(filter(lambda x : x.proven, local_results.deduplicated_theorems))
+        os.makedirs(os.path.join(output_folder_path, str(i)), exist_ok=True)
+        local_results.dump_to_folder(os.path.join(output_folder_path, str(i)))
+
         iteration_results[i] = [len(local_results.useful_theorems), len(local_results.deduplicated_theorems), len(local_results.proven_deduplicated)]
         out.extend(local_results)
     print(iteration_results)
+    with open(os.path.join(output_folder_path, "iteration_results.txt"), "w") as f:
+        f.write("\n".join(list(map(str, iteration_results))))
     exp_name = os.path.basename(output_folder_path)
     averages = np.average(iteration_results, 0)
     var = np.sqrt(np.var(iteration_results, 0))
@@ -389,11 +393,29 @@ async def run_evaluation_at_k (outcomes_filepath: str, output_folder_path: str, 
     out.dump_to_folder(output_folder_path)
     
 
-async def remove_dedup_fix (output_folder_path: str) -> None:
-    useful_theorems = _extract_theorems_from_explanation_file(os.path.join(output_folder_path, "useful_theorems.txt"))
-    results = await _remove_dedup(useful_theorems)
-    with open (os.path.join(output_folder_path, "useful_theorems_dedup_fix.txt"), "w") as f:
-        f.write(results[1][0] + "\n\n" + results[1][1])
+async def remove_dedup_test (output_folder_path: str) -> None:
+    pre = lambda x: os.path.join(output_folder_path, x)
+    with open(pre("useful_theorems.json")) as f:
+        useful_theorems = [LLMUsefulnessEvalTheorem.model_validate(d) for d in json.load(f)]
+    res = []
+    processes = []
+    for it in range(5):
+        local_theorems = []
+        for ut in useful_theorems:
+            response = ut.explanations[it]
+            if "USEFUL" not in response.split("\n")[-1]:
+                continue # malformed response, rare and even rarer for this to be a false negative
+            if "NOT" not in response.split("\n")[-1]:
+                local_theorems.append(ut)
+        processes.append(_remove_dedup(local_theorems, "groups"))
+    res = await tqdm.asyncio.tqdm_asyncio.gather(*processes)
+    for it in range(len(res)):
+        with open(pre(f"dedup_test_{it}.txt"), "w") as f:
+            f.write(res[it][1][1])
+    res_thms = [len(r[0]) for r in res]
+    print (f"Average: {np.average(res_thms)}")
+    print (f"Std: {np.sqrt(np.var(res_thms))}")
+
 
 def get_reproof_values (output_folder_path: str) -> None:
 
@@ -472,90 +494,91 @@ def count_its (filename: str) -> None:
 def reproof_using_smt (exp_folder: str, k=5) -> None:
     pre = lambda x: os.path.join(exp_folder, x)
     with open(pre("useful_theorem_dedup.json")) as f:
-        data_str = f.read()
-
-        list_of_json_strings = ast.literal_eval(data_str)
-
-        # Step 2: parse each JSON string into a dict
-        data = [json.loads(item) for item in list_of_json_strings]
-        useful_theorems_tmp = [Theorem.model_validate(thm) for thm in data]
+        useful_theorems_tmp = [LLMUsefulnessEvalTheorem.model_validate(thm) for thm in json.load(f)]
     results = []
     len_useful = []
     for it in range(k):
-        useful_theorems = []
-        for thm in useful_theorems_tmp:
-            # Extract results from one run
-            response = thm.explanations[it]
-            if ("USEFUL" in response.split("\n")[-1]) and ("NOT" not in response.split("\n")[-1]):
-                useful_theorems.append(thm)
+        useful_theorems: list[LLMUsefulnessEvalTheorem] = [thm for thm in useful_theorems_tmp if thm.dedup_useful_at_k[it]]
         len_useful.append(len(useful_theorems))
         proven = []
         for useful_theorem in useful_theorems:
             if _smt_prove(useful_theorem):
                 proven.append(useful_theorem)
         results.append(len(proven))
+    print(len_useful)
     print(f"Deduplicated conjectures: {np.average(len_useful)}, std {np.sqrt(np.var(len_useful))}")
     print(f"Proven conjectures: {np.average(results)}, std {np.sqrt(np.var(results))}")
+
+async def fix_dedup (output_folder: str) -> None:
+    pre = lambda x : os.path.join(output_folder, x)
+    with open(pre("useful_theorem_dedup.json")) as f:
+        try:
+            useful_theorems_dedup = [LLMUsefulnessEvalTheorem.model_validate(d) for d in json.load(f)]
+        except Exception as e:
+            print(output_folder, e)
+            return
+    if useful_theorems_dedup[0].dedup_useful_at_k: # Doesn't need fixing
+        return
+    # dedup_map: dict[str, LLMUsefulnessEvalTheorem] = {}
+    # for thm in useful_theorems_dedup:
+    #     dedup_map[thm.thm_string] = thm
+    
+    with open(pre("useful_theorems.json")) as f:
+        useful_theorems = [LLMUsefulnessEvalTheorem.model_validate(d) for d in json.load(f)]
+
+    
+    for it_k in range(5):
+        ut_k = []
+        for ut in useful_theorems:
+            response = ut.explanations[it_k].split("\n")[-1]
+            if not "NOT" in response:
+                ut_k.append(ut)
+        dedup_ut_k = (await _remove_dedup(ut_k))[0]
+        for thm in dedup_ut_k:
+            if not thm.dedup_useful_at_k:
+                thm.dedup_useful_at_k = [False] * 5
+            thm.dedup_useful_at_k[it_k] = True
+    useful_theorems_dedup = [thm for thm in useful_theorems if any(thm.dedup_useful_at_k)]
         
+    with open(pre("useful_theorem_dedup.json"), "w") as f:
+        json.dump([thm.model_dump() for thm in useful_theorems_dedup], f)
+            
+async def fix_all_dedup ():
+    folders = os.listdir("/home/timothekasriel/minimo_org/learning/outputs")
+    to_run = []
+    print("To run: \n")
+    for exp in folders:
+        if os.path.exists(os.path.join("/home/timothekasriel/minimo_org/learning/outputs", exp, "useful_theorem_dedup.json")):
+            to_run.append(fix_dedup(os.path.join("/home/timothekasriel/minimo_org/learning/outputs", exp)))
+            print(exp)
+    time.sleep(5)
+    await asyncio.gather(*to_run)
 
 
 
 if __name__ == "__main__":
+    # asyncio.run(fix_all_dedup())
+    # sys.exit(0)
     exp_folders = [
-        # "/home/timothekasriel/minimo/learning/outputs/line10",
-        # "/home/timothekasriel/minimo/learning/outputs/favor_conj_seed",
-        # "/home/timothekasriel/minimo/learning/outputs/limit_proofsearch_space_5_2",
-        # "/home/timothekasriel/minimo/learning/outputs/line15",
-        # "/home/timothekasriel/minimo/learning/outputs/line16",
-        "/home/timothekasriel/minimo/learning/outputs/line18_2",
-        "/home/timothekasriel/minimo/learning/outputs/line19_2",
-        "/home/timothekasriel/minimo/learning/outputs/line21",
-        "/home/timothekasriel/minimo/learning/outputs/line22",
-        "/home/timothekasriel/minimo/learning/outputs/line23",
-        "/home/timothekasriel/minimo/learning/outputs/line24",
-        "/home/timothekasriel/minimo/learning/outputs/line25",
-        "/home/timothekasriel/minimo/learning/outputs/line27",
-        "/home/timothekasriel/minimo/learning/outputs/line30",
-        "/home/timothekasriel/minimo/learning/outputs/line31",
-        "/home/timothekasriel/minimo/learning/outputs/line32",
         "/home/timothekasriel/minimo/learning/outputs/line33",
-        # "/home/timothekasriel/minimo_org/learning/outputs/filtered"
+        # "/home/timothekasriel/minimo/learning/outputs/line33_2",
+        "/home/timothekasriel/minimo/learning/outputs/line33_3",
+        "/home/timothekasriel/minimo/learning/outputs/line33_prop",
+        # "/home/timothekasriel/minimo/learning/outputs/line33_group",
+        "/home/timothekasriel/minimo/learning/outputs/line33.8",
+        "/home/timothekasriel/minimo/learning/outputs/line33.10",
+        "/home/timothekasriel/minimo_org/learning/outputs/base",
+        "/home/timothekasriel/minimo_org/learning/outputs/base_2",
+        "/home/timothekasriel/minimo_org/learning/outputs/base_3",
+        "/home/timothekasriel/minimo_org/learning/outputs/base_prop",
+        # "/home/timothekasriel/minimo_org/learning/outputs/base_group",
     ]
-    OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/line27"
-    # count_its("/home/timothekasriel/minimo/learning/outputs/line18/useful_theorems.txt")
-    # print (f"Current evaluation: {os.path.basename(OUTPUT_FOLDER)}")
-    # print(get_reproof_values(OUTPUT_FOLDER))
+    OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/line2_group_2"
+    print (f"Running on {OUTPUT_FOLDER}")
 
-    # get_fix_evaluation_metrics(OUTPUT_FOLDER, it=8)
-    # _smt_prove(Theorem(thm_string="",iteration=-1,proven=True,logprob=0.0,thm_string_simple="((v0 : Nat) -> (v1 : Nat) -> (v2 : (((1 * v0) * 1) = v0)) -> (((1 * ((1 * ((1 * v0) * (Nat.succ 0))) * 1)) * 1) = (v0 + 1)))"))
-    for exp in exp_folders:
-        print(f"Experiment: {exp}")
-        try:
-            reproof_using_smt(exp)
-        except:
-            continue
-    # asyncio.run(run_evaluation_at_k(os.path.join(OUTPUT_FOLDER, "outcomes_8.json"), OUTPUT_FOLDER, 5))
+    # asyncio.run(remove_dedup_test(OUTPUT_FOLDER))
 
-    # asyncio.run(run_evaluation_at_k(os.path.join(OUTPUT_FOLDER, "outcomes_9.json"), OUTPUT_FOLDER, 5))
-    # for it in range(1,20):
-    
-    # get_fix_evaluation_metrics(OUTPUT_FOLDER, it=14)
-    # get_evaluation_metrics("/home/timothekasriel/minimo/learning/outputs/line9", it=5)
-    # for exp_folder in exp_folders:
-    #     try:
-    #         get_fix_evaluation_metrics(exp_folder, it=14)
-    #     except:
-    #         pass
-    #     try:
-    #         get_fix_evaluation_metrics(exp_folder, it=9)
-    #     except:
-    #         get_fix_evaluation_metrics(exp_folder, it=4)
-    #     asyncio.run(run_evaluation_at_k(os.path.join(exp_folder, "outcomes_5.json"), exp_folder, 5))
-    # asyncio.run(remove_dedup_fix(OUTPUT_FOLDER))
-    # send_batch_evaluation("/Users/tkasriel/code/rsh/minimo/learning/outputs/orig_minimo/outcomes_arith.json", OUTPUT_FOLDER, "Original Minimo Arithmetic Evaluation")
-    # list_batch_evaluations(OUTPUT_FOLDER)
-    # cancel_batch("batch_68523b4c6ea081908042e6131d7bea8e")
-    # get_batch_evaluations("batch_68523c3f921c8190a46b4f7f0d508d37", OUTPUT_FOLDER)
-    # make_graph("/home/timothekasriel/minimo/learning/outputs/2025-06-05/11-55-28/outcomes_16.json", OUTPUT_FOLDER)
-    # draw_graph("/home/timothekasriel/minimo/learning/outputs/llm_eval/graph.csv", OUTPUT_FOLDER)
-    # look_at_graph("/home/timothekasriel/minimo/learning/outputs/llm_eval/graph.csv")
+
+    asyncio.run(run_evaluation_at_k(os.path.join(OUTPUT_FOLDER, "outcomes_9.json"), OUTPUT_FOLDER, 3))
+    # get_fix_evaluation_metrics(OUTPUT_FOLDER, it=9)
+    # reproof_using_smt(OUTPUT_FOLDER)

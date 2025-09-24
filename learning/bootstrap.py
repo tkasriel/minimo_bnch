@@ -54,6 +54,7 @@ def process_main(id: int, cfg, instruction_queue: mp.Queue, output_queue: mp.Que
     d = None
     context = None
     print(f"Process {id} ready")
+    failed_conjectures = 0
     sys.stdin = open(0)
     if cfg.deterministic:
         random.seed(id)
@@ -65,8 +66,6 @@ def process_main(id: int, cfg, instruction_queue: mp.Queue, output_queue: mp.Que
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
 
     while not instruction or instruction.instruction != InstructionEnum.STOP:
-        
-        
         instruction = MPInstruction.model_validate(instruction_queue.get())
         profiler = cProfile.Profile()
         
@@ -92,16 +91,22 @@ def process_main(id: int, cfg, instruction_queue: mp.Queue, output_queue: mp.Que
             previous_conjectures: list[str] = instruction.previous_conjectures
             # profiler.enable()
             new_conj = sample_conjecture(cfg, AgentLM(agent, CONJECTURE_PROMPT), context, previous_conjectures, seed=seed_statement)
+            if not new_conj:
+                failed_conjectures += 1
+            # if failed_conjectures % 100 == 0 and failed_conjectures > 0:
+            #     print(f"Process {id} has failed conjecturing {failed_conjectures} times")
             # profiler.disable()
             # profiler.dump_stats(f"profiler_conj_res_{id}.dmp")
             output_queue.put(MPResult(instruction=InstructionEnum.CONJECTURE, result=new_conj, seed=seed_statement, time_taken=time.time()-start_time))
         
         elif instruction.instruction == InstructionEnum.PROOF:
+            failed_conjectures = 0
             assert instruction.thm_to_prove
             assert type(background_theory) is worker.BackgroundTheory
             st_time = time.time()
             profiler.enable()
             result = worker.try_prove(cfg, agent, background_theory, instruction.thm_to_prove, extract_hindsight=instruction.extract_hindsight or False, verbose=False)
+
             # tr.print_diff()
             # breakpoint()
             profiler.disable()
@@ -122,8 +127,10 @@ def batch_prove (cfg, agent_file: str, conjectures: list[str], theory: str, prem
     num_dead = 0
     student_results = []
     progress_bar = tqdm(total=len(conjectures))
-    while len(student_results) < len(conjectures) and num_dead < cfg.num_processes:
+    total_proofs = 0
+    while total_proofs < len(conjectures) and num_dead < cfg.num_processes:
         mp_result = MPResult.model_validate(output_queue.get())
+        print(f"Number of results: {total_proofs}")
         print (f"Proving took {mp_result.time_taken}s")
         if mp_result.instruction == InstructionEnum.CONJECTURE:
             # Leftover from conjecturing. We could use them, but for now I'll just throw them out
@@ -137,9 +144,9 @@ def batch_prove (cfg, agent_file: str, conjectures: list[str], theory: str, prem
         assert type(student_result) is StudentResult
         if student_result.error:
             print("Proof search errored.")
-            print(student_result.error)
+            total_proofs += 1
             continue
-        if student_result.success:
+        elif student_result.success:
             assert student_result.proof and student_result.solution_actions
             print("Proof search was a success! Proof actions taken:")
             print("\t"+"\n\t".join(student_result.solution_actions))
@@ -148,6 +155,7 @@ def batch_prove (cfg, agent_file: str, conjectures: list[str], theory: str, prem
             print("Proof search failed")
         print(f"Got {len(student_result.hindsight_examples)} hindsight examples\n")
         student_results.append(student_result)
+        total_proofs += 1
         progress_bar.update(1)
     progress_bar.close()
     return student_results
@@ -251,8 +259,6 @@ def teacher_loop(cfg: DictConfig):
 
     continue_dir = cfg.get('continue')
     start_iteration = 0
-    with open("flags.json", "w") as f:
-        json.dump(OmegaConf.to_container(cfg, resolve=True), f)
     if continue_dir is not None:
         os.makedirs(continue_dir, exist_ok=True)
         os.chdir(continue_dir)
@@ -287,15 +293,19 @@ def teacher_loop(cfg: DictConfig):
             with open(f"generated_theorems_{i-1}.json") as f:
                 thms = json.load(f)
                 useful_theorems = UsefulConjectureList.validate_python(thms)
-            with open(f"usefulness_outcomes_{i-1}.json") as f:
-                j = json.load(f)
-                usefulness_outcomes = UsefulnessOutcomeList.validate_python(j)
+            if i > 1:
+                with open(f"usefulness_outcomes_{i-1}.json") as f:
+                    j = json.load(f)
+                    usefulness_outcomes = UsefulnessOutcomeList.validate_python(j)
 
 
         print('Loaded', len(proven_conjectures), 'proven conjectures from previous run.')
 
     if cfg.get('freeze_conjecturer', False):
         print('Ablation: Freezing conjecturer.')
+
+    with open("flags.json", "w") as f:
+        json.dump(OmegaConf.to_container(cfg, resolve=True), f)
 
 
     conjecture_index = len(useful_theorems)
@@ -439,62 +449,62 @@ def teacher_loop(cfg: DictConfig):
                     extract_examples(cfg, difficulty_buckets, permanent_deriv, seen_hindsight_goals, examples, student_result, thresholds)
 
             # Now we check for usefulness
-            hard_theorems = [res for res in student_results if res.proof and res.logprob < thresholds[1]]
-            print (len(hard_theorems), len(useful_theorems))
-            if len(useful_theorems) > 0:
-                print ("Beginning usefulness check")
-                # breakpoint()
-                if cfg.max_proof_expansion < 0:
-                    theorems_to_check = random.sample(useful_theorems, int(math.sqrt(len(useful_theorems))))
-                else:
-                    theorems_to_check = useful_theorems
-                new_theory = theory + "\n\n" + "\n\n".join(map(lambda x: x.theorem, theorems_to_check))
-                new_premises = premises + [thm.theorem.split(" : ")[0] for thm in theorems_to_check]
-                hard_problems = [ht.problem for ht in hard_theorems]
-                res = []
-                if cfg.use_multiprocessing:
-                    res = batch_prove(cfg, f'{i}.pt', hard_problems, new_theory, new_premises, instruction_queue, output_queue) # type: ignore
-                else:
-                    bk = worker.BackgroundTheory(new_theory, new_premises)
-                    for hard_theorem in tqdm(hard_theorems):
-                        res.append(worker.try_prove(cfg, agent, bk, hard_theorem.problem))
-                success_count = 0
-                for proof_res, hard_theorem in zip(res, hard_theorems):
-                    if proof_res.proof:
-                        success_count +=1 
-                        usefulness_outcomes.append(UsefulnessOutcome(
-                            iteration=i,
-                            problem=convert_peano_to_lean(hard_theorem.problem, 0, False, cfg.theory.name),
-                            proof=proof_res.proof,
-                            used_theorems=list(map(lambda x: x.theorem, theorems_to_check)),
-                            improvement=proof_res.logprob - hard_theorem.logprob
-                        ))
-                        if proof_res.logprob > hard_theorem.logprob or not cfg.metric_use_logprob:
-                            if cfg.metric_use_usage:
-                                for line in proof_res.proof:
+            if cfg.usefulness_testing:
+                hard_theorems = [res for res in student_results if res.proof and res.logprob < thresholds[1]]
+                print (len(hard_theorems), len(useful_theorems))
+                if len(useful_theorems) > 0:
+                    print ("Beginning usefulness check")
+                    if cfg.max_proof_expansion < 0:
+                        theorems_to_check = random.sample(useful_theorems, int(math.sqrt(len(useful_theorems))))
+                    else:
+                        theorems_to_check = useful_theorems
+                    new_theory = theory + "\n\n" + "\n\n".join(map(lambda x: x.theorem, theorems_to_check))
+                    new_premises = premises + [thm.theorem.split(" : ")[0] for thm in theorems_to_check]
+                    hard_problems = [ht.problem for ht in hard_theorems]
+                    res = []
+                    if cfg.use_multiprocessing:
+                        res = batch_prove(cfg, f'{i}.pt', hard_problems, new_theory, new_premises, instruction_queue, output_queue) # type: ignore
+                    else:
+                        bk = worker.BackgroundTheory(new_theory, new_premises)
+                        for hard_theorem in tqdm(hard_theorems):
+                            res.append(worker.try_prove(cfg, agent, bk, hard_theorem.problem))
+                    success_count = 0
+                    for proof_res, hard_theorem in zip(res, hard_theorems):
+                        if proof_res.proof:
+                            success_count +=1 
+                            usefulness_outcomes.append(UsefulnessOutcome(
+                                iteration=i,
+                                problem=convert_peano_to_lean(hard_theorem.problem, 0, False, cfg.theory.name),
+                                proof=proof_res.proof,
+                                used_theorems=list(map(lambda x: x.theorem, theorems_to_check)),
+                                improvement=proof_res.logprob - hard_theorem.logprob
+                            ))
+                            if proof_res.logprob > hard_theorem.logprob or not cfg.metric_use_logprob:
+                                if cfg.metric_use_usage:
+                                    for line in proof_res.proof:
+                                        for thm in theorems_to_check:
+                                            thm_name = thm.theorem.split(" : ")[0]
+                                            if thm_name in line:
+                                                improvement = proof_res.logprob - hard_theorem.logprob
+                                                thm.tot_improvement += improvement
+                                                thm.freq_used += 1
+                                                break
+                                else:
                                     for thm in theorems_to_check:
-                                        thm_name = thm.theorem.split(" : ")[0]
-                                        if thm_name in line:
-                                            improvement = proof_res.logprob - hard_theorem.logprob
-                                            thm.tot_improvement += improvement
-                                            thm.freq_used += 1
-                                            break
-                            else:
-                                for thm in theorems_to_check:
-                                    improvement = proof_res.logprob - hard_theorem.logprob
-                                    thm.tot_improvement += improvement
-                                    thm.freq_used += 1
-                                        
-                    # Train the model to use the old theorems.
-                    if proof_res.hindsight_examples and cfg.train_on_usefulness_testing:
-                        extract_examples(cfg, difficulty_buckets, permanent_deriv, seen_hindsight_goals, examples, proof_res, thresholds, verbose=True)
-            useful_theorems = [thm for thm in useful_theorems if not (i - thm.iter_generated >= 3 and thm.tot_improvement <= 1e-7)]
-            if cfg.metric_use_usage:
-                useful_theorems.sort(key=lambda thm: (thm.tot_improvement)/(i-thm.iter_generated))
-            else:
-                useful_theorems.sort(key=lambda thm: (thm.tot_improvement/(thm.freq_used+1))/(i-thm.iter_generated))
-            
-            useful_theorems = useful_theorems[len(useful_theorems)//10:]
+                                        improvement = proof_res.logprob - hard_theorem.logprob
+                                        thm.tot_improvement += improvement
+                                        thm.freq_used += 1
+                                            
+                        # Train the model to use the old theorems.
+                        if proof_res.hindsight_examples and cfg.train_on_usefulness_testing:
+                            extract_examples(cfg, difficulty_buckets, permanent_deriv, seen_hindsight_goals, examples, proof_res, thresholds, verbose=True)
+                useful_theorems = [thm for thm in useful_theorems if not (i - thm.iter_generated >= 3 and thm.tot_improvement <= 1e-7)]
+                if cfg.metric_use_usage:
+                    useful_theorems.sort(key=lambda thm: (thm.tot_improvement)/(i-thm.iter_generated))
+                else:
+                    useful_theorems.sort(key=lambda thm: (thm.tot_improvement/(thm.freq_used+1))/(i-thm.iter_generated))
+                
+                useful_theorems = useful_theorems[len(useful_theorems)//10:]
             
             if cfg.train_on_usefulness:
                 for thm in useful_theorems:
@@ -510,14 +520,16 @@ def teacher_loop(cfg: DictConfig):
                         else:
                             examples.append(to_add)
             end_usefulness_time = time.time()
+
+            if cfg.usefulness_testing:
             
-            for student_result in student_results:
-                if student_result.success:
-                    conjecture_index += 1
-                    useful_theorems.append(UsefulConjecture(theorem=f"c{conjecture_index:04} : " + student_result.problem + ".",
-                                                            iter_generated=i, 
-                                                            freq_used=0,
-                                                            tot_improvement=0.0))
+                for student_result in student_results:
+                    if student_result.success:
+                        conjecture_index += 1
+                        useful_theorems.append(UsefulConjecture(theorem=f"c{conjecture_index:04} : " + student_result.problem + ".",
+                                                                iter_generated=i, 
+                                                                freq_used=0,
+                                                                tot_improvement=0.0))
 
             log.write(json.dumps({'iteration': i,
                                 'msg': f'Training on {len(examples)} examples.'}))
@@ -541,7 +553,7 @@ def teacher_loop(cfg: DictConfig):
                     pass
                 tm.write(f"Training took {train_end_time-end_usefulness_time}s\n")
                 tm.write(f"Total time taken: {train_end_time-start_time}s\n")
-
+            
             save_json(useful_theorems, f"generated_theorems_{i}.json")
             save_json(examples, f'examples_{i}.json')
             save_json(outcomes, f'outcomes_{i}.json')
@@ -631,9 +643,6 @@ def reprove_conjectures_using_model (cfg: DictConfig, outcomes_filepath: str, mo
 def main(cfg: DictConfig):
     print('Running from:', os.getcwd())
     setup_wandb(cfg)
-    if cfg.theory == "propositional-logic":
-        global ALLOW_PROP_AS_TYPE
-        ALLOW_PROP_AS_TYPE = True
     if cfg.task == 'teacher':
         teacher_loop(cfg)
     if cfg.task == "reproof":
