@@ -40,11 +40,11 @@ class ProofOutcome (BaseModel):
 class UsefulnessOutcome (BaseModel):
     iteration: int
     problem: str
-    problem_peano: str
+    problem_peano: str | None = None
     proof: list
-    actions: list
+    actions: list | None = None
     used_theorems: list
-    logprob: float
+    logprob: float | None = None
     improvement: float
 
 class UsefulConjecture (BaseModel):
