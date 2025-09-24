@@ -11,6 +11,7 @@ import celery
 import re
 
 path = "outputs\\line33"
+iteration = 1
 
 with open(os.path.join(path, "flags.json"), "r") as f:
     cfg_dict = json.load(f)
@@ -21,21 +22,22 @@ with open(os.path.join(path, "flags.json"), "r") as f:
 print(f"Using theory from config: {cfg.theory.name}")
 print(f"Support theorem use: {cfg.support_theorem_use}")
 
-agent: ProofSearchAgent = torch.load(os.path.join(path, '5.pt'), weights_only=False)
+agent: ProofSearchAgent = torch.load(os.path.join(path, f'{iteration}.pt'), weights_only=False)
+agent._policy._lm.eval()
 
 with open(os.path.join(os.path.dirname(__file__), "theories", cfg.theory.name + '.p')) as f:
     theory = f.read()
 
-with open(os.path.join(path, "outcomes_5.json"), "r", encoding = "utf-8") as f:
+with open(os.path.join(path, f"outcomes_{iteration}.json"), "r", encoding = "utf-8") as f:
     outcomes = json.load(f)
 
-with open(os.path.join(path, "usefulness_outcomes_5.json"), "r", encoding = "utf-8") as f:
+with open(os.path.join(path, f"usefulness_outcomes_{iteration}.json"), "r", encoding = "utf-8") as f:
     usefulness_outcomes = json.load(f)
 
-outcomes = [i for i in outcomes if (not i["hindsight"] and i["logprob"] and i["iteration"] == 5)]
+outcomes = [i for i in outcomes if (not i["hindsight"] and i["logprob"] and i["iteration"] == iteration)]
 premises = cfg.theory.premises
 
-usefulness_outcomes = [i for i in usefulness_outcomes if i["iteration"] == 5]
+usefulness_outcomes = [i for i in usefulness_outcomes if i["iteration"] == iteration]
 
 
 # new_premises = premises + [thm.theorem.split(" : ")[0] for thm in theorems_to_check]
@@ -67,16 +69,26 @@ def convert_proof_to_actions(proof_lines: list[str]):
         if not line or line.startswith("theorem ") or line == "}":
             continue
 
+        # intro.
         if line.startswith("intro ") and line.endswith("."):
             actions.append("intro.")
             continue
 
+        # apply
+        if line.startswith("apply ") and line.endswith("."):
+            tactic = line[len("apply "):-1].strip()
+            if not tactic:
+                raise ValueError(f"Empty apply tactic: {line}")
+            actions.append(f"a {tactic}")
+            actions.append("=> .")
+            continue
+
+        # show … by …
         m = show_re.match(line)
         if m:
             goal = m.group("goal").strip()
             tactic = m.group("tactic").strip()
             actions.append(f"c {tactic}")
-            # Ensure trailing period on goal in the action
             goal_with_period = goal if goal.endswith(".") else f"{goal}."
             actions.append(f"=> {goal_with_period}")
             continue
@@ -161,6 +173,7 @@ for useful_theorem_outcome in usefulness_outcomes:
 
     calculated_logprob = get_logprob(cfg, agent, worker_theory, statement, solution_actions)
 
+    print(statement)
     print(f"Calculated improvement:{calculated_logprob-baseline_logprob}, reference improvement: {useful_theorem_outcome['improvement']}")
 
     deltas.append(np.abs(calculated_logprob - (baseline_logprob + useful_theorem_outcome['improvement'])))
