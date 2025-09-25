@@ -9,6 +9,7 @@ from proofsearch import TreeSearchNode, LeftmostFirstSearchNode, HolophrasmNode,
 import numpy as np
 import celery
 import re
+from tqdm import tqdm
 
 def get_logprob(cfg, agent, theory, statement, solution_actions):
     state = peano.PyProofState(theory.theory,
@@ -79,37 +80,6 @@ def extract_peano_statement_from_proof(proof_lines: list[str]):
             return txt.split('{', 1)[0].strip()
     raise ValueError("No theorem header found.")
 
-## This test is without any additional conjectures in the theory and should pass
-# eps = 0.01
-# print("Testing to see if calculated logprobs match with reference logprobs in outcomes.json...")
-# for useful_theorem_outcome in usefulness_outcomes:
-#     problem_statement = extract_peano_statement_from_proof(useful_theorem_outcome["proof"])
-
-#     baseline_problem = None
-#     for regular_outcome in outcomes:
-#         if regular_outcome["problem"] == problem_statement:
-#             baseline_problem = regular_outcome
-#             break
-    
-#     assert baseline_problem, f"Could not find problem {problem_statement} in outcomes.json file"
-
-#     used_theorems = useful_theorem_outcome["used_theorems"]
-#     new_theory = theory + "\n\n" + "\n\n".join(used_theorems)
-#     new_premises = premises + [thm.split(" : ")[0] for thm in used_theorems]
-
-#     ## Test proof without using theorems
-#     worker_theory = worker.BackgroundTheory(theory, premises)
-
-#     statement = baseline_problem["problem"]
-#     solution_actions = baseline_problem["actions"]
-
-#     calculated_logprob = get_logprob(cfg, agent, worker_theory, statement, solution_actions)
-#     actual_logprob = baseline_problem['logprob']
-
-#     assert np.abs(calculated_logprob - actual_logprob) < eps, f"Non-usefulness: calculated logprob of {calculated_logprob} diferred from {actual_logprob} for problem {statement}"
-
-# print("Tests passed")
-
 def compute_improvement(cfg, useful_theorem_outcome, baseline_outcomes, agent, base_theory, base_premises):
     problem_statement = extract_peano_statement_from_proof(useful_theorem_outcome["proof"])
 
@@ -140,75 +110,46 @@ def compute_improvement(cfg, useful_theorem_outcome, baseline_outcomes, agent, b
 
     return {"original_logprob": base_logprob, "usefulness_logprob": usefulness_logprob, "improvement": improvement}    
 
-# Calculate improvement for usefulness (results do not match)
-# deltas = []
-# for useful_theorem_outcome in usefulness_outcomes:
-#     problem_statement = extract_peano_statement_from_proof(useful_theorem_outcome["proof"])
+def compute_logprobs_usefulness(path, model_it, theorems_it, single_theorem_it_only = True, used_theorem_only = True):
+    with open(os.path.join(path, "flags.json"), "r") as f:
+        cfg_dict = json.load(f)
+        cfg = OmegaConf.create(cfg_dict)
 
-#     baseline_problem = None
-#     for regular_outcome in outcomes:
-#         if regular_outcome["problem"] == problem_statement:
-#             baseline_problem = regular_outcome
-#             break
-    
-#     assert baseline_problem, f"Could not find problem {problem_statement} in outcomes.json file"
+    print(f"Using theory from config: {cfg.theory.name}")
 
-#     used_theorems = useful_theorem_outcome["used_theorems"]
-#     new_theory = theory + "\n\n" + "\n\n".join(used_theorems)
-#     new_premises = premises + [thm.split(" : ")[0] for thm in used_theorems]
+    agent: ProofSearchAgent = torch.load(os.path.join(path, f'{model_it}.pt'), weights_only=False)
+    agent._policy._lm.eval()
 
-#     # ## Test proof with theorems
-#     worker_theory = worker.BackgroundTheory(new_theory, new_premises)
+    with open(os.path.join(os.path.dirname(__file__), "theories", cfg.theory.name + '.p')) as f:
+        theory = f.read()
 
-#     ref_logprob = useful_theorem_outcome['logprob']
-#     solution_actions = convert_proof_to_actions(useful_theorem_outcome["proof"])
+    with open(os.path.join(path, f"outcomes_{theorems_it}.json"), "r", encoding = "utf-8") as f:
+        outcomes = json.load(f)
 
-#     calculated_logprob = get_logprob(cfg, agent, worker_theory, problem_statement, solution_actions)
+    with open(os.path.join(path, f"usefulness_outcomes_{theorems_it}.json"), "r", encoding = "utf-8") as f:
+        usefulness_outcomes = json.load(f)
+        
+    if(single_theorem_it_only):
+        outcomes = [i for i in outcomes if (not i["hindsight"] and i["logprob"] and i["iteration"] <= theorems_it)]
+        usefulness_outcomes = [i for i in usefulness_outcomes if i["iteration"] == theorems_it]
+    else:
+        outcomes = [i for i in outcomes if (not i["hindsight"] and i["logprob"])]
+        usefulness_outcomes = [i for i in usefulness_outcomes if True]
 
-#     # print(statement)
-#     # print(f"Calculated logprob:{calculated_logprob}, reference improvement: {ref_logprob}")
+    print(f"Found {len(usefulness_outcomes)} for testing")
 
-#     print("---------------------------------------------------------------------------------------")
-#     print(f"Original logprob: {baseline_problem['logprob']}")
-#     print(f"Usefulness logprob (ref): {useful_theorem_outcome['logprob']}")
-#     print(f"Usefulness logprob (calc): {calculated_logprob}")
-#     print(f"Usefulness improvements: {useful_theorem_outcome['improvement']}")
-#     print(f"Disparity: {np.abs(calculated_logprob - baseline_problem['logprob'] - useful_theorem_outcome['improvement'])}")
+    premises = cfg.theory.premises
 
-#     deltas.append(np.abs(calculated_logprob - baseline_problem['logprob'] + useful_theorem_outcome['improvement']))
+    results = []
+    for usefulness_outcome in tqdm(usefulness_outcomes):
+        if(not "by c" in str(usefulness_outcome["proof"])):
+            continue
+        out = compute_improvement(cfg, usefulness_outcome, outcomes, agent, theory, premises)
 
-# print(f"Average absolute difference between calculated and ref improvement for used theorems: {np.mean(deltas)}")
+        results.append(out)
 
+    return results
 
-
-# for useful_theorem_outcome in usefulness_outcomes:
-#     problem_statement = extract_peano_statement_from_proof(useful_theorem_outcome["proof"])
-
-#     baseline_problem = None
-#     for regular_outcome in outcomes:
-#         if regular_outcome["problem"] == problem_statement:
-#             baseline_problem = regular_outcome
-#             break
-    
-#     assert baseline_problem, f"Could not find problem {problem_statement} in outcomes.json file"
-
-
-#     used_theorems = useful_theorem_outcome["used_theorems"]
-#     new_theory = theory + "\n\n" + "\n\n".join(used_theorems)
-#     new_premises = premises + [thm.split(" : ")[0] for thm in used_theorems]
-
-#     # ## Test proof with theorems
-#     worker_theory = worker.BackgroundTheory(new_theory, new_premises)
-
-#     baseline_logprob = useful_theorem_outcome['logprob']
-#     statement = problem_statement
-
-#     solution_actions = convert_proof_to_actions(useful_theorem_outcome["proof"])
-
-#     calculated_logprob = get_logprob(cfg, agent, worker_theory, statement, solution_actions)
-
-#     print(statement)
-#     print(f"Calculated logprob:{calculated_logprob}, reference improvement: {useful_theorem_outcome['logprob']}")
 
 def test_logprob_on_ref():
     path = "outputs\\new_test"
