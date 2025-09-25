@@ -115,8 +115,6 @@ def compute_logprobs_usefulness(path, model_it, theorems_it, single_theorem_it_o
         cfg_dict = json.load(f)
         cfg = OmegaConf.create(cfg_dict)
 
-    print(f"Using theory from config: {cfg.theory.name}")
-
     agent: ProofSearchAgent = torch.load(os.path.join(path, f'{model_it}.pt'), weights_only=False)
     agent._policy._lm.eval()
 
@@ -136,12 +134,10 @@ def compute_logprobs_usefulness(path, model_it, theorems_it, single_theorem_it_o
         outcomes = [i for i in outcomes if (not i["hindsight"] and i["logprob"])]
         usefulness_outcomes = [i for i in usefulness_outcomes if True]
 
-    print(f"Found {len(usefulness_outcomes)} for testing")
-
     premises = cfg.theory.premises
 
     results = []
-    for usefulness_outcome in tqdm(usefulness_outcomes):
+    for usefulness_outcome in usefulness_outcomes:
         if(not "by c" in str(usefulness_outcome["proof"])):
             continue
         out = compute_improvement(cfg, usefulness_outcome, outcomes, agent, theory, premises)
