@@ -479,7 +479,7 @@ def teacher_loop(cfg: DictConfig):
                                 problem=convert_peano_to_lean(hard_theorem.problem, 0, False, cfg.theory.name),
                                 problem_peano=hard_theorem.problem,
                                 proof=proof_res.proof,
-                                actions=proof_res.actions,
+                                actions=proof_res.solution_actions,
                                 used_theorems=list(map(lambda x: x.theorem, theorems_to_check)),
                                 improvement=proof_res.logprob - hard_theorem.logprob,
                                 logprob=proof_res.logprob
