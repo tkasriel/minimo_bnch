@@ -459,9 +459,7 @@ def teacher_loop(cfg: DictConfig):
                     else:
                         theorems_to_check = useful_theorems
                     new_theory = theory + "\n\n" + "\n\n".join(map(lambda x: x.theorem, theorems_to_check))
-                    print(new_theory)
                     new_premises = premises + [thm.theorem.split(" : ")[0] for thm in theorems_to_check]
-                    print(new_premises)
                     hard_problems = [ht.problem for ht in hard_theorems]
                     res = []
                     if cfg.use_multiprocessing:
