@@ -7,8 +7,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 path = "outputs/line33"
 
-model_its = [i for i in range(1, 10)]
-theorems_it = [i for i in range(1, 10)]
+model_its = [i for i in range(0, 11)]
+theorems_it = [i for i in range(1, 11)]
 
 # Pre-allocate structure
 outcomes_by_model = {m: {} for m in model_its}
