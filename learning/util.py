@@ -20,7 +20,7 @@ import numpy as np
 from omegaconf import DictConfig, OmegaConf, open_dict
 from tqdm import tqdm
 
-ALLOW_PROP_AS_TYPE = False
+ALLOW_PROP_AS_TYPE = True
 
 PAD = 0
 BOS = 1

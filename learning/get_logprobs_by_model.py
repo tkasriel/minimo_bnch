@@ -11,6 +11,8 @@ import celery
 import re
 from tqdm import tqdm
 
+from extract_actions_prop_logic import convert_proof_to_actions_prop
+
 def get_logprob(cfg, agent, theory, statement, solution_actions):
     state = peano.PyProofState(theory.theory,
                                theory.premises,
@@ -20,8 +22,12 @@ def get_logprob(cfg, agent, theory, statement, solution_actions):
                             'holophrasm': HolophrasmNode})[cfg.get('node_type', 'holophrasm')]
     root = TreeSearchNode(node_type([state]))
 
-    return root.solution_logprob_under_policy(cfg, agent._policy, solution_actions)
-
+    try:
+        solution_logprob = root.solution_logprob_under_policy(cfg, agent._policy, solution_actions)
+    except Exception:
+        print(f"Failed at {statement}")
+        return 1
+    return solution_logprob
 # NOTE FROM TL: I only tested the following helpers for nat-mul
 def convert_proof_to_actions(proof_lines: list[str]):
     actions = []
