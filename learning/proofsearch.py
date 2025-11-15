@@ -1548,7 +1548,13 @@ def main(cfg: DictConfig):
         test_probability_under_policy()
     elif cfg.task == 'eval':
         setup_wandb(cfg)
-        evaluate_agent(cfg)
+        base = "/home/timothekasriel/minimo_org/learning/outputs/base/"
+        with open(base + "res.csv", "w") as f:
+            for i in range(15):
+                cfg["agent_path"] = base + f"{i}.pt"
+                print(f"Current model: {i}.pt")
+                ps = evaluate_agent(cfg, add_to_library=True)
+                f.write(f"{i},{len(ps._solved)}\n")
     elif cfg.task == 'visualize':
         test_agent(cfg)
 

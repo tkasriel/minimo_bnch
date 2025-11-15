@@ -20,6 +20,8 @@ import numpy as np
 from omegaconf import DictConfig, OmegaConf, open_dict
 from tqdm import tqdm
 
+from classes import UsefulConjecture
+
 ALLOW_PROP_AS_TYPE = False
 
 PAD = 0
@@ -324,6 +326,19 @@ def time_limit(seconds):
     finally:
         signal.alarm(0)
 
+def theorems_in_proof (proof: list, thms_to_check: list[UsefulConjecture]) -> list[UsefulConjecture]:
+    output = []
+    for line in proof:
+        if type(line) is list:
+            output.extend(theorems_in_proof(line, thms_to_check))
+            continue
+        for thm in thms_to_check:
+            thm_name = thm.theorem.split(" : ")[0]
+            if thm_name in line:
+                output.append(thm)
+                break
+    return output
+
 
 def save_json(obj: Sequence[BaseModel] | list[dict], path: str):
     if len(obj) == 0:
@@ -460,3 +475,33 @@ def get_seed_statement(cfg, proven_conjectures: list[str], comp_to_raw_dict: dic
     else:
         seed = None
     return seed
+
+
+if __name__ == "__main__":
+    proof = [
+            "theorem t : [('a0 : false) -> (iff (not false) (or false false))] {",
+            "intro x : false.",
+            "apply iff_i.",
+            [
+                "goal [(not false) -> (or false false)] {",
+                "show (or false false) by c0044.",
+                "intro _ : [(not false) -> (or false false)].",
+                "}"
+            ],
+            [
+                "goal [(or false false) -> (not false)] {",
+                "intro x0 : (or false false).",
+                "apply not_i.",
+                [
+                    "goal [false -> false] {",
+                    "intro _ : [false -> false].",
+                    "}"
+                ],
+                "}"
+            ],
+            "}"
+    ]
+    check = theorems_in_proof(proof, [UsefulConjecture(theorem="c0044 : [('a0 : false) -> (or false false)].",iter_generated=0,freq_used=1,tot_improvement=0.0)])
+    assert len(check) == 1
+    assert check[0].theorem == "c0044 : [('a0 : false) -> (or false false)]."
+    print ("all checks passed")

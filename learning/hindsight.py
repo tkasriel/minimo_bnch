@@ -11,17 +11,7 @@ import peano
 import proofsearch
 from action import ProofAction
 from util import format_blocks_with_indent
-
-
-@dataclass
-class HindsightExample:
-    goal: str
-    statement: str
-    proof: list[str]
-    solution_actions: list[str]
-    logprob: float
-    examples: list[str]
-
+from classes import HindsightExample
 
 def extract_hindsight_examples(cfg,root,
                                theory: str,

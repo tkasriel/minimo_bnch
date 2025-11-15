@@ -14,3 +14,4 @@ learning/test.py
 .env
 vis/
 learning/graphs/
+learning/old_outputs/

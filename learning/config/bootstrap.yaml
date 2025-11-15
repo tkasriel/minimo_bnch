@@ -3,7 +3,7 @@ task: teacher
 defaults:
     - _self_
     - agent: mcts-lm
-    - theory: nat-mul
+    - theory: groups
 
 iterations: 10
 n_conjectures: 200
@@ -12,19 +12,20 @@ num_processes: 6
 mp_start_method: spawn
 
 # Experiment flags
-trivial_filtering: True
-support_theorem_use: True
-metric_use_usage: True
-metric_use_logprob: True
-train_on_usefulness: True # This is for the *conjecturer*. If we get a signal from useful conjectures, we train the model on these conjectures
-train_on_usefulness_testing: True # This is for the *prover*, ie train on usefulness testing examples from proving
+trivial_filtering: False
+support_theorem_use: False
+metric_use_usage: False
+support_novelty: False
+metric_use_logprob: False
+train_on_usefulness: False # This is for the *conjecturer*. If we get a signal from useful conjectures, we train the model on these conjectures
+train_on_usefulness_testing: False # This is for the *prover*, ie train on usefulness testing examples from proving
+usefulness_testing: False
+
+
 deterministic: False
-train_improvement: False
-
-
 seed: False
+train_improvement: False
 intro_skip: False
-support_novelty: True
 max_proof_expansion: -1 # -1 for no max
 increase_variable_conjecturing: False
 prove_all_at_end: False

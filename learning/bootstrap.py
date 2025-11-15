@@ -25,7 +25,7 @@ from classes import InstructionEnum, MPInstruction, MPResult, ProofOutcome, Proo
 from convert_to_lean import convert_peano_to_lean
 import worker
 from worker import StudentResult
-from util import ALLOW_PROP_AS_TYPE, format_blocks_with_indent, get_seed_statement, sample_batch, setup_wandb, value_color, save_json
+from util import ALLOW_PROP_AS_TYPE, format_blocks_with_indent, get_seed_statement, sample_batch, setup_wandb, theorems_in_proof, value_color, save_json
 from conjecture import AgentLM, Context, sample_conjecture
 from proofsearch import ProofSearchAgent, make_agent
 import re
@@ -113,7 +113,7 @@ def process_main(id: int, cfg, instruction_queue: mp.Queue, output_queue: mp.Que
             end_time = time.time()
             # profiler.dump_stats(f"profiler_proof_res_{id}.dmp")
             # end_time = time.time()
-            if end_time - st_time > 1000: # check what's going on with the longer proofs
+            if end_time - st_time > 2000: # check what's going on with the longer proofs
                 profiler.dump_stats(f"profiler_res_{id}.txt")
             output_queue.put(MPResult(instruction=InstructionEnum.PROOF, result=result, time_taken=time.time()-start_time))
         # print (f"Curr memory : {process.memory_info()[0] / float(2 ** 20)}")
@@ -315,8 +315,11 @@ def teacher_loop(cfg: DictConfig):
         instruction_queue: mp.Queue = mp.Queue()
         output_queue: mp.Queue = mp.Queue()
         processes: list[mp.Process] = []
-
+        if num_processes > 6:
+            gpus = os.environ["CUDA_VISIBLE_DEVICES"].split(",")
         for j in range(num_processes):
+            if num_processes > 6:
+                os.environ["CUDA_VISIBLE_DEVICES"] = gpus[j // 6]
             new_process = mp.Process(target=process_main,kwargs={"id": j,
                                                                  "cfg": cfg,
                                                                  "instruction_queue": instruction_queue, 
@@ -469,7 +472,9 @@ def teacher_loop(cfg: DictConfig):
                         for hard_theorem in tqdm(hard_theorems):
                             res.append(worker.try_prove(cfg, agent, bk, hard_theorem.problem))
                     success_count = 0
-                    for proof_res, hard_theorem in zip(res, hard_theorems):
+                    key = lambda x: x.problem
+                    for proof_res, hard_theorem in zip(sorted(res, key=key), sorted(hard_theorems, key=key)):
+                        assert proof_res.problem == hard_theorem.problem
                         if proof_res.proof:
                             success_count +=1 
                             usefulness_outcomes.append(UsefulnessOutcome(
@@ -481,14 +486,10 @@ def teacher_loop(cfg: DictConfig):
                             ))
                             if proof_res.logprob > hard_theorem.logprob or not cfg.metric_use_logprob:
                                 if cfg.metric_use_usage:
-                                    for line in proof_res.proof:
-                                        for thm in theorems_to_check:
-                                            thm_name = thm.theorem.split(" : ")[0]
-                                            if thm_name in line:
-                                                improvement = proof_res.logprob - hard_theorem.logprob
-                                                thm.tot_improvement += improvement
-                                                thm.freq_used += 1
-                                                break
+                                    for thm in theorems_in_proof(proof_res.proof, theorems_to_check):
+                                        improvement = proof_res.logprob - hard_theorem.logprob
+                                        thm.tot_improvement += improvement
+                                        thm.freq_used += 1
                                 else:
                                     for thm in theorems_to_check:
                                         improvement = proof_res.logprob - hard_theorem.logprob

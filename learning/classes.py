@@ -1,9 +1,36 @@
+from dataclasses import dataclass
 from enum import Enum
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, RootModel, TypeAdapter
 import os, json
 
-from worker import StudentResult
+
+@dataclass
+class HindsightExample:
+    goal: str
+    statement: str
+    proof: list[str]
+    solution_actions: list[str]
+    logprob: float
+    examples: list[str]
+
+@dataclass
+class StudentResult:
+    error: Optional[str]
+    success: bool
+    problem: str
+    solution_actions: Optional[list[str]]
+    proof: Optional[list[str]]
+    extracted_examples: list[str]
+    hindsight_examples: list[HindsightExample]
+    iterations: int
+    logprob: float
+
+
+@dataclass
+class BackgroundTheory:
+    theory: str
+    premises: list[str]
 
 class InstructionEnum(str, Enum):
     CONJECTURE = "CONJECTURE"

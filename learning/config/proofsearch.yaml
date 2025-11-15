@@ -1,10 +1,16 @@
-task: proofsearch
+task: eval
 
 problemset: natural-number-game
 
 max_problems: 5000
 accumulate_library: false
 n_conjectures: 50
+max_proof_expansion: 5000
+intro_skip: False
+support_theorem_use: False # Doesn't matter here
+
+
+agent_path: /home/timothekasriel/minimo/learning/old_outputs/line33/0.pt
 
 agent:
     max_mcts_nodes: 1000

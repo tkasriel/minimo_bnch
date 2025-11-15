@@ -370,7 +370,10 @@ def pretty_print_conjecture(conjecture: str) -> str:
 MAX_OPEN_PARENS = 8
 
 def sample_conjecture(cfg, lm: "AgentLM", context, previous_conjectures: list[str], seed = None, max_it=100):
-    generation = ''
+    if cfg.trivial_filtering:
+        generation = '[' # This does nothing apart from making it a bit faster to generate conjectures
+    else:
+        generation = ''
 
     def has_trivial_outcome(conjecture):
         parts = conjecture.split("->")

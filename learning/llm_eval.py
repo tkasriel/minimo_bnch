@@ -1,4 +1,3 @@
-import ast
 import asyncio
 import json
 import os
@@ -23,6 +22,10 @@ if not dotenv.load_dotenv():
 print (f"OPENAI API KEY: {os.getenv('OPENAI_API_KEY')}")
 client = AsyncOpenAI()
 MODEL = "gpt-4.1"
+
+MAX_CONCURRENT = 40
+semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+
 
         
 
@@ -114,15 +117,6 @@ Here is the theorem you are to evaluate
 Think through the problem step by step. Translate the problem into natural language, then think of what the possible uses of the theorem could be, whether it's obviously true and whether it means something.
 On the last line, say either USEFUL or NOT USEFUL and nothing else.
 """
-    if theory_name == 'groups':
-        prompt += """Note: you can ignore irrelevant hypotheses. For example, the following theorems would not be considered useful.
-theorem problem1 : ((v0 : Group) -> (v0 = (v0 • 1)))
-theorem problem2 : ((v0 : Group) -> ((v0 • 1) = v0))
-theorem problem3 : ((v0 : (1 = 1)) -> (1 = (1 • 1)))
-
-As the first two are rewrites of axiom id_1
-Problem 3 has an irrelevant hypothesis so we can ignore it, but more importantly has a straighforward application of id_1: By running id_1 1, we get this exact theorem, so it's not useful.
-"""
     chats = [[
         {"role": "developer", "content": "You are an expert at evaluating lean theorems"},
         {"role": "user", "content": prompt.format(theorem)}
@@ -180,13 +174,21 @@ Think it through step by step, and then return the list of unique theorems from 
         {"role": "user", "content": prompt.format('\n'.join([u.thm_string for u in useful_theorems]), "\n\n".join(['\n'.join(u.thm_string + "\n" + u.explanations[0]) for u in useful_theorems]))}
     ]
     # print(chat[1]["content"][:8000])
-    completion = await client.chat.completions.create(
+    
+    extracted_theorems: list[str] = []
+    while not extracted_theorems:
+        completion = await client.chat.completions.create(
         model=MODEL,
         messages=chat, # type: ignore
-    )
-    res = completion.choices[0].message.content
-    assert res
-    res_theorems: str = re.findall(r'(?s)```lean.*```', res)[-1]
+        )
+        res = completion.choices[0].message.content
+        assert res
+        extracted_theorems = re.findall(pattern=r'(?s)```lean.*```', string=res)
+        if not extracted_theorems:
+            print ("Malformed GPT response. Retrying...")
+
+    res_theorems: str = extracted_theorems[-1]
+
     outs: set[LLMUsefulnessEvalTheorem] = set()
     for res_thm in res_theorems.split('\n'):
         if '```' in res_thm:
@@ -238,10 +240,13 @@ def _fix_eval_metrics (exp_folder: str, it: int) -> tuple[int, int]:
                         break
     return sum([thm.freq_used for thm in theorems]), len([thm for thm in theorems if thm.freq_used > 0])
 
-def _smt_prove (theorem: LLMUsefulnessEvalTheorem) -> bool:
+def _smt_prove (theorem: LLMUsefulnessEvalTheorem, is_group: bool) -> bool:
     variables = dict()
     def _convert_to_smt(thm_str: str):
-        """ Convert lean to SMT. Is good for naturals, maybe not for prop logic/group theory
+        """ Convert lean to SMT.
+        For natural numbers, we can add a condition that every element is ≥ 0. This is fine, as we don't have any ways to subtract, and so therefore we can't have any case where the variables are non-negative but the result is negative.
+        For prop-logic, the SMT solver writes itself.
+        For group theory, our axioms are simple enough (we dont take any definitions of specific types of groups) that we can take the integers as a medium for proofs.
         """
         nonlocal variables
         if thm_str[0] == "(": 
@@ -252,6 +257,8 @@ def _smt_prove (theorem: LLMUsefulnessEvalTheorem) -> bool:
                 return 1 + _convert_to_smt(atoms[1])
             if atoms[0] == "¬":
                 return Not(_convert_to_smt(atoms[1]))
+            if len(atoms) == 1 and atoms[0][-2:] == "⁻¹":
+                return - _convert_to_smt(atoms[0][:-2]) 
             if atoms[1] == "->" or atoms[1] == "→":
                 rest = ' '.join(atoms[2:])
                 if "->" in rest or "→" in rest:
@@ -267,14 +274,15 @@ def _smt_prove (theorem: LLMUsefulnessEvalTheorem) -> bool:
                     return _convert_to_smt(rest)
                 elif ": G" in atoms[0]:
                     varname = atoms[0].split()[0][1:]
-                    variables[varnae] = Group()
+                    variables[varname] = Int(varname)
+                    return _convert_to_smt(rest)
                 else:
                     # First atom will be of the form (vX : <hypothesis>), when we want it to be (<hypothesis>)
                     hyp = " : ".join(atoms[0][1:-1].split(" : ")[1:])
                     return Implies(_convert_to_smt(hyp), _convert_to_smt(rest))
             if atoms[1] == "*":
                 return _convert_to_smt(atoms[0]) * _convert_to_smt(atoms[2])
-            if atoms[1] == "+":
+            if atoms[1] == "+" or atoms[1] == "•":
                 return _convert_to_smt(atoms[0]) + _convert_to_smt(atoms[2])
             if atoms[1] == "=" or atoms[1] == "↔":
                 return _convert_to_smt(atoms[0]) == _convert_to_smt(atoms[2])
@@ -282,6 +290,7 @@ def _smt_prove (theorem: LLMUsefulnessEvalTheorem) -> bool:
                 return And(_convert_to_smt(atoms[0]), _convert_to_smt(atoms[2]))
             if atoms[1] == "∨":
                 return Or(_convert_to_smt(atoms[0]), _convert_to_smt(atoms[2]))
+            print(atoms)
         
 
         else:
@@ -294,6 +303,8 @@ def _smt_prove (theorem: LLMUsefulnessEvalTheorem) -> bool:
                 return False
             if thm_str == "true":
                 return True
+            if thm_str == "1" and is_group:
+                return 0 # Additive identity is 0
             return int(thm_str)
 
 
@@ -315,7 +326,7 @@ def _smt_prove (theorem: LLMUsefulnessEvalTheorem) -> bool:
     return res.r == -1
 
 
-async def run_evaluation_at_k (outcomes_filepath: str, output_folder_path: str, k: int = 1) -> None:
+async def run_evaluation_at_k (outcomes_filepath: str, output_folder_path: str, k: int = 1, prove_first: bool = False) -> None:
     os.makedirs(output_folder_path, exist_ok = True)
     if not os.path.exists(outcomes_filepath):
         raise FileNotFoundError(f"Cannot find outcomes file")
@@ -330,7 +341,11 @@ async def run_evaluation_at_k (outcomes_filepath: str, output_folder_path: str, 
 
     print(f"Detected theory: {theory_name}")
 
-    theorem_list: list[LLMUsefulnessEvalTheorem] = _extract_theorems_from_outcomes(outcomes_filepath, include_unproven=True, theory_name = theory_name)
+    theorem_list_unproven: list[LLMUsefulnessEvalTheorem] = _extract_theorems_from_outcomes(outcomes_filepath, include_unproven=True, theory_name = theory_name)
+    if prove_first:
+        theorem_list = [thm for thm in tqdm.tqdm(theorem_list_unproven) if _smt_prove(thm, is_group=(theory_name == "groups"))]
+    else:
+        theorem_list = theorem_list_unproven
     prompt_list = _make_prompts([t.thm_string for t in theorem_list], theory_name = theory_name)
     out = LLMUsefulnessEvalResult()
 
@@ -345,22 +360,21 @@ async def run_evaluation_at_k (outcomes_filepath: str, output_folder_path: str, 
         promises: list[Awaitable] = []
 
         for prompt in prompt_list:
-            completion = client.chat.completions.create(
-                model= MODEL,
-                messages=prompt, # type: ignore
-            )
-            promises.append(completion)
+            async def _ (prompt):
+                async with semaphore:
+                    completion = await client.chat.completions.create(
+                        model= MODEL,
+                        messages=prompt, # type: ignore
+                    )
+                    return completion
+            promises.append(_(prompt))
         print("All requests sent")
 
         results = []
-        batch_size = 100
-        # send by batches of batch_size because program crashes with 2k requests at once
-        progress = tqdm.tqdm(total=len(promises))
-        for batch_i in range(0, len(promises), batch_size):
-            batch = promises[batch_i:min(batch_i+batch_size, len(promises))]
-            results.extend(await asyncio.gather(*batch))
-            progress.update(len(batch))
-        progress.close()
+
+        for result in tqdm.tqdm(asyncio.as_completed(promises), total=len(promises)):
+            res = await result
+            results.append(res)
     
         for theorem, completion in zip(theorem_list, results):
             response: str = completion.choices[0].message.content
@@ -495,6 +509,8 @@ def reproof_using_smt (exp_folder: str, k=5) -> None:
     pre = lambda x: os.path.join(exp_folder, x)
     with open(pre("useful_theorem_dedup.json")) as f:
         useful_theorems_tmp = [LLMUsefulnessEvalTheorem.model_validate(thm) for thm in json.load(f)]
+    with open(pre("flags.json")) as f:
+        flags = json.load(f)
     results = []
     len_useful = []
     for it in range(k):
@@ -502,7 +518,7 @@ def reproof_using_smt (exp_folder: str, k=5) -> None:
         len_useful.append(len(useful_theorems))
         proven = []
         for useful_theorem in useful_theorems:
-            if _smt_prove(useful_theorem):
+            if _smt_prove(useful_theorem, flags["theory"]["name"] == "groups"):
                 proven.append(useful_theorem)
         results.append(len(proven))
     print(len_useful)
@@ -557,28 +573,55 @@ async def fix_all_dedup ():
 
 
 if __name__ == "__main__":
-    # asyncio.run(fix_all_dedup())
-    # sys.exit(0)
     exp_folders = [
-        "/home/timothekasriel/minimo/learning/outputs/line33",
+        # "/home/timothekasriel/minimo/learning/outputs/line33",
         # "/home/timothekasriel/minimo/learning/outputs/line33_2",
-        "/home/timothekasriel/minimo/learning/outputs/line33_3",
-        "/home/timothekasriel/minimo/learning/outputs/line33_prop",
+        # "/home/timothekasriel/minimo/learning/outputs/line33_3",
+        # "/home/timothekasriel/minimo_org/learning/outputs/base",
+        # "/home/timothekasriel/minimo_org/learning/outputs/base_2",
+        # "/home/timothekasriel/minimo_org/learning/outputs/base_3",
+
+        # "/home/timothekasriel/minimo/learning/outputs/line33_prop",
+        # "/home/timothekasriel/minimo/learning/outputs/line33_prop_2",
+        # "/home/timothekasriel/minimo/learning/outputs/line33_prop_3",
         # "/home/timothekasriel/minimo/learning/outputs/line33_group",
-        "/home/timothekasriel/minimo/learning/outputs/line33.8",
-        "/home/timothekasriel/minimo/learning/outputs/line33.10",
-        "/home/timothekasriel/minimo_org/learning/outputs/base",
-        "/home/timothekasriel/minimo_org/learning/outputs/base_2",
-        "/home/timothekasriel/minimo_org/learning/outputs/base_3",
-        "/home/timothekasriel/minimo_org/learning/outputs/base_prop",
+        # "/home/timothekasriel/minimo/learning/outputs/line33_group_2",
+        # "/home/timothekasriel/minimo/learning/outputs/line33_group_3",
+        
+        # "/home/timothekasriel/minimo/learning/outputs/line33.9",
+        # "/home/timothekasriel/minimo/learning/outputs/line33.9_2",
+        # "/home/timothekasriel/minimo/learning/outputs/line33.9.3",
+        # "/home/timothekasriel/minimo/learning/outputs/line33.8",
+
+        # "/home/timothekasriel/minimo/learning/outputs/line33.10",
+        
+        # "/home/timothekasriel/minimo_org/learning/outputs/base_prop",
+        # "/home/timothekasriel/minimo/learning/outputs/line2_prop_2",
+        "/home/timothekasriel/minimo/learning/outputs/line2_prop_3",
         # "/home/timothekasriel/minimo_org/learning/outputs/base_group",
+        # "/home/timothekasriel/minimo/learning/outputs/line2_group_2",
+        # "/home/timothekasriel/minimo/learning/outputs/line2_group_3",
     ]
-    OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/line2_group_2"
-    print (f"Running on {OUTPUT_FOLDER}")
+    OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/line33"
+    # print (f"Running on {OUTPUT_FOLDER}")
 
     # asyncio.run(remove_dedup_test(OUTPUT_FOLDER))
+    # thm = LLMUsefulnessEvalTheorem(
+    #     thm_string="theorem problem43760 : ((v0 : Group) -> (v1 : Group) -> (v2 : Group) -> (v3 : (v2 = v0)) -> (v4 : Group) -> (v5 : Group) -> (((v2 • 1)⁻¹) = (1 • ((v0 • 1)⁻¹))))",
+    #     thm_string_simple="((v0 : Group) -> (v1 : Group) -> (v2 : Group) -> (v3 : (v2 = v0)) -> (v4 : Group) -> (v5 : Group) -> (((v2 • 1)⁻¹) = (1 • ((v0 • 1)⁻¹))))",
+    #     iteration=-1,
+    #     proven= False,
+    #     logprob=0.0,
+    #     thm_org=None,
+    #     explanations=[],
+    #     dedup_useful_at_k=[]
 
-
-    asyncio.run(run_evaluation_at_k(os.path.join(OUTPUT_FOLDER, "outcomes_9.json"), OUTPUT_FOLDER, 3))
-    # get_fix_evaluation_metrics(OUTPUT_FOLDER, it=9)
-    # reproof_using_smt(OUTPUT_FOLDER)
+    # )
+    # for exp in exp_folders:
+        # asyncio.run(run_evaluation_at_k(os.path.join(exp, "outcomes_9.json"), exp, 5, prove_first=False))
+        # get_fix_evaluation_metrics(exp, it=9)
+        # reproof_using_smt(exp, k=5)
+    asyncio.run(run_evaluation_at_k(os.path.join(OUTPUT_FOLDER, "outcomes_9.json"), OUTPUT_FOLDER, 5, prove_first=False))
+    reproof_using_smt(OUTPUT_FOLDER, k=5)
+    get_fix_evaluation_metrics(OUTPUT_FOLDER, it=9)
+    

@@ -16,24 +16,7 @@ import peano
 from proofsearch import ProofSearchAgent
 import policy
 import hindsight
-
-@dataclass
-class StudentResult:
-    error: Optional[str]
-    success: bool
-    problem: str
-    solution_actions: Optional[list[str]]
-    proof: Optional[list[str]]
-    extracted_examples: list[str]
-    hindsight_examples: list[hindsight.HindsightExample]
-    iterations: int
-    logprob: float
-
-
-@dataclass
-class BackgroundTheory:
-    theory: str
-    premises: list[str]
+from classes import BackgroundTheory, StudentResult
 
 
 redis_url = f'redis://{os.environ.get("REDIS", "localhost")}'
