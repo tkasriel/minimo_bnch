@@ -26,6 +26,7 @@ def get_logprob(cfg, agent, theory, statement, solution_actions):
         solution_logprob = root.solution_logprob_under_policy(cfg, agent._policy, solution_actions)
     except Exception:
         print(f"Failed at {statement}")
+
         return 1
     return solution_logprob
 # NOTE FROM TL: I only tested the following helpers for nat-mul
@@ -148,6 +149,81 @@ def compute_logprobs_usefulness(path, model_it, theorems_it, single_theorem_it_o
             continue
         out = compute_improvement(cfg, usefulness_outcome, outcomes, agent, theory, premises)
 
+        results.append(out)
+
+    return results
+
+def compute_logprobs_usefulness_revision(
+    model_path,
+    data_path,
+    model_it,
+    theorems_it,
+    single_theorem_it_only: bool = True,
+    used_theorem_only: bool = True,
+):
+    # Config + theory come from the data_path
+    with open(os.path.join(data_path, "flags.json"), "r") as f:
+        cfg_dict = json.load(f)
+        cfg = OmegaConf.create(cfg_dict)
+
+    # Model comes from the model_path
+    agent: ProofSearchAgent = torch.load(
+        os.path.join(model_path, f"{model_it}.pt"),
+        weights_only=False
+    )
+    agent._policy._lm.eval()
+
+    # Theory file is still resolved from this source file's directory
+    with open(
+        os.path.join(os.path.dirname(__file__), "theories", cfg.theory.name + ".p")
+    ) as f:
+        theory = f.read()
+
+    # Outcomes & usefulness outcomes come from the data_path
+    with open(
+        os.path.join(data_path, f"outcomes_{theorems_it}.json"),
+        "r",
+        encoding="utf-8",
+    ) as f:
+        outcomes = json.load(f)
+
+    with open(
+        os.path.join(data_path, f"usefulness_outcomes_{theorems_it}.json"),
+        "r",
+        encoding="utf-8",
+    ) as f:
+        usefulness_outcomes = json.load(f)
+
+    if single_theorem_it_only:
+        outcomes = [
+            i
+            for i in outcomes
+            if (not i["hindsight"] and i["logprob"] and i["iteration"] <= theorems_it)
+        ]
+        usefulness_outcomes = [
+            i for i in usefulness_outcomes if i["iteration"] == theorems_it
+        ]
+    else:
+        outcomes = [
+            i for i in outcomes if (not i["hindsight"] and i["logprob"])
+        ]
+        usefulness_outcomes = [i for i in usefulness_outcomes]
+
+    premises = cfg.theory.premises
+
+    results = []
+    for usefulness_outcome in usefulness_outcomes:
+        if "by c" not in str(usefulness_outcome["proof"]):
+            continue
+
+        out = compute_improvement(
+            cfg,
+            usefulness_outcome,
+            outcomes,
+            agent,
+            theory,
+            premises,
+        )
         results.append(out)
 
     return results

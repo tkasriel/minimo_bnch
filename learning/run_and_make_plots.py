@@ -92,7 +92,7 @@ def plot_agg(column):
     fig.subplots_adjust(top = 0.87)
 
     plt.ylim(-18, -2)
-    plt.savefig(f"plots/figure_{column}_vs_model-it_{path_prefix}.png") 
+    plt.savefig(f"plots/test_figure_{column}_vs_model-it_{path_prefix}.png") 
 
 plot_agg("original_logprob")
 plot_agg("usefulness_logprob")
