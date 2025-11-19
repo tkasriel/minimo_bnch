@@ -1397,7 +1397,10 @@ def evaluate_agent(config: DictConfig, agent=None, add_to_library:bool = False) 
     for problem in problemset.problem_names()[begin:end]:
         print('Attempting problem:', problem)
         try:
-            result = agent.proof_search(config, problem, problemset.initialize_problem(problem))
+            for i in range(5):
+                result = agent.proof_search(config, problem, problemset.initialize_problem(problem))
+                if result.success:
+                    break
         except KeyboardInterrupt:
             raise
         except:
