@@ -502,7 +502,7 @@ class TreeSearchNode:
 
         return dfs(self)
 
-    def _actions_logprob_under_policy(self, cfg, actions, policy: 'Policy') -> float:
+    def _actions_logprob_under_policy(self, cfg, actions, policy: 'Policy', filtered: bool = False) -> float:
         if self.is_solved():
             return 0
 
@@ -511,6 +511,7 @@ class TreeSearchNode:
             raise RuntimeError("Actions lead to terminal non-solved node.")
 
         self.expand(cfg)
+        
 
         if self.is_conjunctive():
             logprob = 0
@@ -518,9 +519,9 @@ class TreeSearchNode:
             assert len(actions) == len(node_actions)
 
             for sna, a in zip(actions, node_actions):
-                logprob += (TreeSearchNode(self._state.expand(a),
+                logprob += (TreeSearchNode(self._state.expand(a), # type: ignore
                                            parent=(self, a))
-                            ._actions_logprob_under_policy(cfg, sna, policy))
+                            ._actions_logprob_under_policy(cfg, sna, policy, filtered))
             return logprob
         else:
             policy.initialize(cfg, self)
@@ -541,16 +542,18 @@ class TreeSearchNode:
                 head_logprob = 0.0
             else:
                 head_logprob = math.log(float(pi[idx]))
+            if filtered and "c0" not in str(head):
+                head_logprob = 0.0
             # print(a, head_logprob)
-            tail_logprob = (TreeSearchNode(self.state_node.expand(a),
+            tail_logprob = (TreeSearchNode(self.state_node.expand(a), # type: ignore
                                            parent=(self, a))
-                            ._actions_logprob_under_policy(cfg, tail, policy))
+                            ._actions_logprob_under_policy(cfg, tail, policy, filtered))
             return head_logprob + tail_logprob
 
-    def solution_logprob_under_policy(self, cfg, policy: 'Policy', actions=None) -> float:
-        return (TreeSearchNode(self._state, None)
+    def solution_logprob_under_policy(self, cfg, policy: 'Policy', actions=None, filtered : bool = False) -> float:
+        return (TreeSearchNode(self._state, None) # type: ignore
                 ._actions_logprob_under_policy(cfg, actions or self.get_solution_actions(),
-                                               policy))
+                                               policy, filtered=filtered))
 
 
     def render_dot(self, min_visits=0) -> list[str]:

@@ -1,3 +1,4 @@
+import math
 import os
 import sys
 import worker
@@ -5,7 +6,7 @@ import peano
 import torch
 import json
 from omegaconf import OmegaConf
-from proofsearch import TreeSearchNode, LeftmostFirstSearchNode, HolophrasmNode, ProofSearchAgent
+from proofsearch import LMPolicy, TreeSearchNode, LeftmostFirstSearchNode, HolophrasmNode, ProofSearchAgent
 import numpy as np
 import celery
 import re
@@ -13,7 +14,45 @@ from tqdm import tqdm
 
 from extract_actions_prop_logic import convert_proof_to_actions_prop
 
-def get_logprob(cfg, agent, theory, statement, solution_actions):
+# def get_filtered_logprob(cfg, agent, theory, statement, solution_actions):
+#     state = peano.PyProofState(theory.theory,
+#                                theory.premises,
+#                                statement)
+    
+#     node_type = ({'vanilla': LeftmostFirstSearchNode,
+#                             'holophrasm': HolophrasmNode})[cfg.get('node_type', 'holophrasm')]
+#     root = TreeSearchNode(node_type([state]))
+#     lm: LMPolicy = agent._policy # type: ignore
+#     lm._lm.eval()
+#     node = root
+#     curr_action = 0
+#     filteredtotlogprob = 0.0
+#     totlogprob = 0.0 # Purely for testing purposes.
+#     # print (f"Proof of {statement}")
+#     while not node.is_terminal():
+#         node.expand(cfg)
+#         lm.initialize(cfg, node)
+#         node.actions
+#         actions = [str(a) for a in node.actions]
+#         action_probs, _ = lm.evaluate(cfg, node)
+#         assert str(solution_actions[curr_action]) in actions, (str(solution_actions[curr_action]), actions)
+#         for action, action_prob in zip(node.actions, action_probs):
+#             if str(action) != str(solution_actions[curr_action]):
+#                 continue
+#             child = TreeSearchNode(node.state_node.expand(action), parent=(node, action))
+#             action_logprob = math.log(float(action_prob))
+#             totlogprob += action_logprob
+#             if "c0" in solution_actions[curr_action]:
+#                 filteredtotlogprob += action_logprob
+#             node = child
+#             break
+#         curr_action += 1
+#     baseline = root.solution_logprob_under_policy(cfg, agent._policy, solution_actions)
+#     # print (f"Total: {totlogprob} vs {baseline}")
+#     assert abs(totlogprob -  baseline) <= 1e-3
+#     return filteredtotlogprob
+
+def get_logprob (cfg, agent, theory, statement, solution_actions, filtered: bool = False):
     state = peano.PyProofState(theory.theory,
                                theory.premises,
                                statement)
@@ -21,14 +60,11 @@ def get_logprob(cfg, agent, theory, statement, solution_actions):
     node_type = ({'vanilla': LeftmostFirstSearchNode,
                             'holophrasm': HolophrasmNode})[cfg.get('node_type', 'holophrasm')]
     root = TreeSearchNode(node_type([state]))
-
     try:
-        solution_logprob = root.solution_logprob_under_policy(cfg, agent._policy, solution_actions)
-    except Exception:
-        print(f"Failed at {statement}")
-
+        return root.solution_logprob_under_policy(cfg, agent._policy, solution_actions, filtered)
+    except Exception as e:
+        print(e)
         return 1
-    return solution_logprob
 # NOTE FROM TL: I only tested the following helpers for nat-mul
 def convert_proof_to_actions(proof_lines: list[str]):
     actions = []
@@ -101,7 +137,7 @@ def compute_improvement(cfg, useful_theorem_outcome, baseline_outcomes, agent, b
     # test proof without theorems
     base_worker_theory = worker.BackgroundTheory(base_theory, base_premises)
     base_actions = baseline_problem["actions"]
-    base_logprob = get_logprob(cfg, agent, base_worker_theory, problem_statement, base_actions)
+    base_logprob = get_logprob(cfg, agent, base_worker_theory, problem_statement, base_actions, filtered=True)
 
     # build augmented theory
     used_theorems = useful_theorem_outcome["used_theorems"]
@@ -111,7 +147,7 @@ def compute_improvement(cfg, useful_theorem_outcome, baseline_outcomes, agent, b
     # ## Test proof with theorems
     usefulness_worker_theory = worker.BackgroundTheory(new_theory, new_premises)
     usefulness_actions = convert_proof_to_actions(useful_theorem_outcome["proof"])
-    usefulness_logprob = get_logprob(cfg, agent, usefulness_worker_theory, problem_statement, usefulness_actions)
+    usefulness_logprob = get_logprob(cfg, agent, usefulness_worker_theory, problem_statement, usefulness_actions, filtered=True)
 
     improvement = usefulness_logprob - base_logprob
 
@@ -230,8 +266,8 @@ def compute_logprobs_usefulness_revision(
 
 
 def test_logprob_on_ref():
-    path = "outputs\\new_test"
-    iteration = 14
+    path = "/home/timothekasriel/minimo/learning/old_outputs/line33.10"
+    iteration = 9
 
     with open(os.path.join(path, "flags.json"), "r") as f:
         cfg_dict = json.load(f)
