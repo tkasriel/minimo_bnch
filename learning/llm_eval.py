@@ -14,8 +14,9 @@ import tqdm.asyncio
 from z3.z3 import ArithRef, Bool, Int, Implies, Or, Solver, solve, And, Not
 import json
 
-from classes import ProofOutcomeList, UsefulConjecture, UsefulConjectureList, UsefulnessOutcomeList, LLMUsefulnessEvalResult, LLMUsefulnessEvalTheorem
+from classes import ProofOutcome, ProofOutcomeList, UsefulConjecture, UsefulConjectureList, UsefulnessOutcomeList, LLMUsefulnessEvalResult, LLMUsefulnessEvalTheorem
 from convert_to_lean import _find_atoms, convert_peano_to_lean
+from problems import load_natural_number_game_problemset
 
 if not dotenv.load_dotenv():
     raise ValueError("Need to set api key in .env")
@@ -183,7 +184,7 @@ Think it through step by step, and then return the list of unique theorems from 
         )
         res = completion.choices[0].message.content
         assert res
-        extracted_theorems = re.findall(pattern=r'(?s)```lean.*```', string=res)
+        extracted_theorems = re.findall(pattern=r'(?s)```lean.*?```', string=res)
         if not extracted_theorems:
             print ("Malformed GPT response. Retrying...")
 
@@ -196,6 +197,7 @@ Think it through step by step, and then return the list of unique theorems from 
         for ut in useful_theorems:
             if res_thm == ut.thm_string:
                 outs.add(ut)
+                break
     return list(outs), (res_theorems, res)
 
 def _what_if_usage_only_metrics (exp_folder: str, it: int) -> tuple[int, int]:
@@ -570,58 +572,196 @@ async def fix_all_dedup ():
     time.sleep(5)
     await asyncio.gather(*to_run)
 
+async def theoremIsInList (theorem_to_check: str, theorem_list: list[str]) -> int:
+    thm_list_string = '\n'.join([str(i+1) + ": " + t for i,t in enumerate(theorem_list)])
+    prompt = f"""
+I have the following Lean4 theorem:
+{theorem_to_check}
+I would like to know if it is semantically identical to any of the following theorems:
+{thm_list_string}
+Think this step by step.
+On the last line, give the number of the theorem in the list it's identical to if it is semantically identical to another theorem. If it is not equal to any in the list, write 0. Don't write anything else in this last line.
+"""
+    chat = [
+        {"role": "developer", "content": "You are an expert at evaluating lean theorems"},
+        {"role": "user", "content": prompt}
+    ]
+    async with semaphore:
+        completion = await client.chat.completions.create(
+            model=MODEL,
+            messages=chat)
+    res = completion.choices[0].message.content
+    assert res
+    lastline = ''.join(filter(str.isdigit, res.split('\n')[-1]))
+    if len(lastline) == 0:
+        print("Malformed response")
+        return -1
+    index = int(lastline)
+    return index-1
+
+async def countTheoremsInList (theorems_to_check: list[str], theorem_list: list[str]) -> int:
+    count = 0
+    promises: list[Awaitable] = []
+    for thm in theorems_to_check:
+        promises.append(theoremIsInList(thm, theorem_list))
+    res = await tqdm.asyncio.tqdm_asyncio.gather(*promises)
+    for r in res:
+        if r >= 0:
+            count += 1
+    return count
+
+async def keepOnlyUnique (theorem_list: list[LLMUsefulnessEvalTheorem]) -> list[LLMUsefulnessEvalTheorem]:
+    thms_string = "\n".join([ut.thm_string_simple for ut in theorem_list])
+    prompt = f"""
+I have the following list of lean theorems. I would like you to select all `unique` lean4 theorems, that is ones that have no other theorem that is semantically equivalent in the list.
+For example, the following four theorems would be duplicates of each other:
+```lean4
+theorem problem1 : ((v0 : Group) -> (v1 : (v0 = (v0 • (1⁻¹)))) -> ((1⁻¹) = 1))
+theorem problem2 : ((v0 : Group) -> (v1 : Group) -> ((1⁻¹) = 1))
+theorem problem3 : ((v0 : Group) -> ((1⁻¹) = 1))
+theorem problem4 : ((v0 : Group) -> (1 = (1⁻¹))
+```
+Problem 1 introduces an irrelevant hypothesis as compared to problem 3, as it makes no mention of v0 in its final claim. Therefore, these two problems are duplicates of each other.
+Problem 2 is a similar case to problem 1: It introduces an extra variable, but does nothing with it. This is irrelevant, and makes for the same problem.
+Problem 4 is the same as problem 3, but is flipped. As we are running this using rw, we can simply call this problem in the inverse direction, so these two lemmas are the same.
+
+Think this step by step, and then give your answer in a ```lean4 ``` code block. Make sure to write the theorem exactly as written.
+Here are the lean4 theorems:
+```lean4
+{thms_string}
+```
+"""
+    chat = [
+        {"role": "developer", "content": "You are an expert at evaluating lean theorems"},
+        {"role": "user", "content": prompt}
+    ]
+    extracted_theorems: list[str] = []
+    while not extracted_theorems:
+        async with semaphore:
+            completion = await client.chat.completions.create(
+                model=MODEL,
+                messages=chat, # type: ignore
+            )
+        res = completion.choices[0].message.content
+        assert res
+        extracted_theorems = re.findall(pattern=r'(?s)```lean.*?```', string=res)
+        if not extracted_theorems:
+            print ("Malformed GPT response. Retrying...")
+    res_theorems: str = extracted_theorems[-1]
+    with open("/home/timothekasriel/minimo/learning/graphs/res.txt", "w") as f:
+        f.write(res)
+
+    outs: set[LLMUsefulnessEvalTheorem] = set()
+    for res_thm in res_theorems.split('\n'):
+        if '```' in res_thm:
+            continue
+        if res_thm not in [ut.thm_string_simple for ut in theorem_list]:
+            print(res_thm)
+            print("test")
+        for ut in theorem_list:
+            if res_thm == ut.thm_string_simple:
+                outs.add(ut)
+                break
+    return list(outs)
+
+
+async def countTheoremsMatchedInList (theorems_to_check: list[str], theorem_list: list[str]) -> int:
+    count = 0
+    promises: list[Awaitable] = []
+    for thm in theorems_to_check:
+        promises.append(theoremIsInList(thm, theorem_list))
+    res = await tqdm.asyncio.tqdm_asyncio.gather(*promises)
+    matched = [False for x in theorem_list]
+    for r in res:
+        if r >= 0:
+            matched[r] = True
+    return count
+
+async def countDedup (thms1: list[LLMUsefulnessEvalTheorem], thms2: list[LLMUsefulnessEvalTheorem]) -> tuple[int,int,int]:
+    
+    print ("Running dedup")
+    thms1_dedup, _ = await _remove_dedup(thms1)
+    thms2_dedup, _ = await _remove_dedup(thms2)
+    with open("/home/timothekasriel/minimo/learning/graphs/thms1.json", "w") as f:
+        json.dump([thm.model_dump() for thm in thms1_dedup], f)
+    with open("/home/timothekasriel/minimo/learning/graphs/thms2.json", "w") as f:
+        json.dump([thm.model_dump() for thm in thms2_dedup], f)
+
+    print ("Obtaining unique")
+    unique = await keepOnlyUnique(thms1_dedup + thms2_dedup)
+    with open("/home/timothekasriel/minimo/learning/graphs/unique.json", "w") as f:
+        json.dump([thm.model_dump() for thm in unique], f)
+    thm1_count = 0
+    thm2_count = 0
+    for r in unique:
+        if r.iteration == 1:
+            thm1_count += 1 
+        else:
+            thm2_count += 1
+    return thm1_count, len(thms1_dedup)+len(thms2_dedup)-len(unique), thm2_count
 
 
 if __name__ == "__main__":
-    exp_folders = [
-        # "/home/timothekasriel/minimo/learning/outputs/line33",
-        # "/home/timothekasriel/minimo/learning/outputs/line33_2",
-        # "/home/timothekasriel/minimo/learning/outputs/line33_3",
+    exp_folders1 = [
+        # "/home/timothekasriel/minimo/learning/old_outputs/line33",
+        # "/home/timothekasriel/minimo/learning/old_outputs/line33_2",
+        # "/home/timothekasriel/minimo/learning/old_outputs/line33_3",
+        # "/home/timothekasriel/minimo/learning/outputs/line33_prop",
+        "/home/timothekasriel/minimo/learning/old_outputs/line33_group",
+        "/home/timothekasriel/minimo/learning/old_outputs/line33_group_2",
+        "/home/timothekasriel/minimo/learning/old_outputs/line33_group_3",
+        # "/home/timothekasriel/minimo/learning/outputs/line33.8",
+        # "/home/timothekasriel/minimo/learning/outputs/line33.10",
         # "/home/timothekasriel/minimo_org/learning/outputs/base",
         # "/home/timothekasriel/minimo_org/learning/outputs/base_2",
         # "/home/timothekasriel/minimo_org/learning/outputs/base_3",
-
-        # "/home/timothekasriel/minimo/learning/outputs/line33_prop",
-        # "/home/timothekasriel/minimo/learning/outputs/line33_prop_2",
-        # "/home/timothekasriel/minimo/learning/outputs/line33_prop_3",
-        # "/home/timothekasriel/minimo/learning/outputs/line33_group",
-        # "/home/timothekasriel/minimo/learning/outputs/line33_group_2",
-        # "/home/timothekasriel/minimo/learning/outputs/line33_group_3",
-        
-        # "/home/timothekasriel/minimo/learning/outputs/line33.9",
-        # "/home/timothekasriel/minimo/learning/outputs/line33.9_2",
-        # "/home/timothekasriel/minimo/learning/outputs/line33.9.3",
-        # "/home/timothekasriel/minimo/learning/outputs/line33.8",
-
-        # "/home/timothekasriel/minimo/learning/outputs/line33.10",
-        
         # "/home/timothekasriel/minimo_org/learning/outputs/base_prop",
-        # "/home/timothekasriel/minimo/learning/outputs/line2_prop_2",
-        "/home/timothekasriel/minimo/learning/outputs/line2_prop_3",
         # "/home/timothekasriel/minimo_org/learning/outputs/base_group",
         # "/home/timothekasriel/minimo/learning/outputs/line2_group_2",
         # "/home/timothekasriel/minimo/learning/outputs/line2_group_3",
     ]
-    OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/line33"
+    exp_folders2 = [
+        "/home/timothekasriel/minimo_org/learning/outputs/base_group",
+        "/home/timothekasriel/minimo/learning/old_outputs/line2_group_2",
+        "/home/timothekasriel/minimo/learning/old_outputs/line2_group_3",
+    ]
+    thms_to_check = []
+    thm_list = []
+    # for exp1 in exp_folders1:
+    #     with open(os.path.join(exp1, "outcomes_9.json")) as f:
+    #         outcomes = [ProofOutcome.model_validate(d) for d in json.load(f)]
+    #         for o in outcomes:
+    #             if o.hindsight:
+    #                 continue
+    #             if not o.problem_translated:
+    #                 o.problem_translated = convert_peano_to_lean(o.problem, o.iteration, False) # type: ignore
+    #             thms_to_check.append(o.problem_translated) # type: ignore
+    # nng = load_natural_number_game_problemset()
+    # thm_list = [convert_peano_to_lean(pb.statement, 0, False) for pb in nng._statements.values()] # type: ignore
+    
+    # print(asyncio.run(countTheoremsMatchedInList(thms_to_check, thm_list)))
+
+
+    for exp1 in exp_folders1:
+        with open(os.path.join(exp1, "useful_theorem_dedup.json")) as f:
+            data = json.load(f)
+            for d in data:
+                thms_to_check.append(LLMUsefulnessEvalTheorem.model_validate(d))
+                thms_to_check[-1].iteration = 1
+    for exp2 in exp_folders2:
+        with open(os.path.join(exp2, "useful_theorem_dedup.json")) as f:
+            data = json.load(f)
+            for d in data:
+                thm_list.append(LLMUsefulnessEvalTheorem.model_validate(d))
+                thms_to_check[-1].iteration = 2
+    print(asyncio.run(countDedup(thms_to_check, thm_list)))
+
+    # OUTPUT_FOLDER = "/home/timothekasriel/minimo/learning/outputs/line2_group_2"
     # print (f"Running on {OUTPUT_FOLDER}")
 
     # asyncio.run(remove_dedup_test(OUTPUT_FOLDER))
-    # thm = LLMUsefulnessEvalTheorem(
-    #     thm_string="theorem problem43760 : ((v0 : Group) -> (v1 : Group) -> (v2 : Group) -> (v3 : (v2 = v0)) -> (v4 : Group) -> (v5 : Group) -> (((v2 • 1)⁻¹) = (1 • ((v0 • 1)⁻¹))))",
-    #     thm_string_simple="((v0 : Group) -> (v1 : Group) -> (v2 : Group) -> (v3 : (v2 = v0)) -> (v4 : Group) -> (v5 : Group) -> (((v2 • 1)⁻¹) = (1 • ((v0 • 1)⁻¹))))",
-    #     iteration=-1,
-    #     proven= False,
-    #     logprob=0.0,
-    #     thm_org=None,
-    #     explanations=[],
-    #     dedup_useful_at_k=[]
 
-    # )
-    # for exp in exp_folders:
-        # asyncio.run(run_evaluation_at_k(os.path.join(exp, "outcomes_9.json"), exp, 5, prove_first=False))
-        # get_fix_evaluation_metrics(exp, it=9)
-        # reproof_using_smt(exp, k=5)
-    asyncio.run(run_evaluation_at_k(os.path.join(OUTPUT_FOLDER, "outcomes_9.json"), OUTPUT_FOLDER, 5, prove_first=False))
-    reproof_using_smt(OUTPUT_FOLDER, k=5)
-    get_fix_evaluation_metrics(OUTPUT_FOLDER, it=9)
-    
+
+    # asyncio.run(run_evaluation_at_k(os.path.join(OUTPUT_FOLDER, "outcomes_9.json"), OUTPUT_FOLDER, 3))
+    # get_fix_evaluation_metrics(OUTPUT_FOLDER, it=9)
+    # reproof_using_smt(OUTPUT_FOLDER)

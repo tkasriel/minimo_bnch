@@ -366,7 +366,6 @@ empty : type.
         nng_problems
     )
 
-
 def load_problemset(problemset_id) -> ProblemSet:
     if problemset_id in ('lean-library-logic', 'logic'):
         return load_lean_library_logic_problemset()

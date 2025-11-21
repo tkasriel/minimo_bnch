@@ -2,11 +2,15 @@ import json
 import os
 
 from matplotlib import pyplot as plt
+import tqdm
+from classes import LLMUsefulnessEvalResult, LLMUsefulnessEvalTheorem, ProofOutcome
 from conjecture import Context, App
 from peano import PyDerivation
 import re
 
+from convert_to_lean import convert_peano_to_lean
 from llm_eval import get_reproof_values
+from problems import ProblemSet, load_natural_number_game_problemset
 
 def test_app_parse():
     def has_trivial_outcome(conjecture):
@@ -96,19 +100,51 @@ def graph_improvements (exp_names: list[str], improvements_by_it: list[list[int]
     from graphing import _make_graph
     _make_graph("Reproof improvement per iteration", "improvement", exp_names, improvements_by_it, "reproof_succ.png")
     
+def test_conjectured(outcomes: list[ProofOutcome], problemset: ProblemSet, theory="nat-mul"):
+    for o in outcomes:
+        if not o.problem_translated:
+            o.problem_translated = convert_peano_to_lean(o.problem, o.iteration, simplify=False, theory_string=theory)
+    count = 0
+    for name, problem in tqdm.tqdm(problemset._statements.items()):
+        translated_problem = convert_peano_to_lean(problem.statement, 0, simplify=False, theory_string=theory)
+        for o in outcomes:
+            if translated_problem == o.problem_translated:
+                count += 1
+                print(o.problem)
+                print(problem.statement)
+                break
+        # if translated_problem in translated_outcomes:
+        #     count += 1
+    return count
 
+def get_average_usefulness(usefulness_res: list[LLMUsefulnessEvalTheorem]) -> float:
+    count = 0.0
+    for o in usefulness_res:
+        count += sum([1 if x else 0 for x in o.dedup_useful_at_k])
+    return count / 5
 
 
 if __name__ == "__main__":
-    exp_folder = "/home/timothekasriel/minimo/learning/outputs/"
-    exps = os.listdir(exp_folder)
-    exp_outs = []
-    exp_names = []
-    for exp in exps:
-        if (os.path.exists(os.path.join(exp_folder, exp, "final_outcomes.json")) and
-           os.path.exists(os.path.join(exp_folder, exp, "useful_theorem_dedup_proven.txt"))):
-            print(f"Experiment: {exp}")
-            get_reproof_values(os.path.join(exp_folder, exp))
+    exp = "/home/timothekasriel/minimo_org/learning/outputs/base_group"
+    with open(os.path.join(exp, "useful_theorem_dedup.json")) as f:
+        data = json.load(f)
+        res = [LLMUsefulnessEvalTheorem.model_validate(d) for d in data]
+    print(get_average_usefulness(res))
+    # with open(os.path.join(exp, "outcomes_9.json")) as f:
+    #     data = json.load(f)
+    #     outcomes = [ProofOutcome.model_validate(d) for d in data]
+    # ps = load_natural_number_game_problemset()
+    # print(test_conjectured(outcomes, ps))
+
+    # exp_folder = "/home/timothekasriel/minimo/learning/outputs/"
+    # exps = os.listdir(exp_folder)
+    # exp_outs = []
+    # exp_names = []
+    # for exp in exps:
+    #     if (os.path.exists(os.path.join(exp_folder, exp, "final_outcomes.json")) and
+    #        os.path.exists(os.path.join(exp_folder, exp, "useful_theorem_dedup_proven.txt"))):
+    #         print(f"Experiment: {exp}")
+    #         get_reproof_values(os.path.join(exp_folder, exp))
     #         try:
     #             exp_outs.append(get_reproof_values(exp_folder))
     #             exp_outs.append(test_reproof_improvement(
