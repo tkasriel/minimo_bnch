@@ -29,9 +29,9 @@ model_paths = [
 
 # --- baseline model paths ---
 baseline_model_paths = [
-    "/srv/share/minimo/line33.10_3/",
-    "/srv/share/minimo/line33.10_3/",
-    "/srv/share/minimo/line33.10_3/"
+    "/srv/share/minimo/line33.10/",
+    "/srv/share/minimo/line33.10/",
+    "/srv/share/minimo/line33.10/"
 ]
 
 # baseline_model_paths = [
@@ -44,7 +44,7 @@ baseline_model_paths = [
 outcomes_by_model_all = []
 
 for model_path, data_path in zip(model_paths, data_paths):
-    cache_path = os.path.join("plots", os.path.basename(model_path)+f"_{path_prefix}_logprob_outcomes.json")
+    cache_path = os.path.join("plots", os.path.basename(model_path)+f"_{path_prefix}_filtered_logprob_outcomes.json")
 
     if try_read:
         try:
@@ -57,7 +57,7 @@ for model_path, data_path in zip(model_paths, data_paths):
             print(f"failed to load main model cache for {model_path}")
 
     # Pre-allocate structure
-    outcomes_by_model = {m: {} for m in model_its}
+    outcomes_by_model = {str(m): {} for m in model_its}
 
     def _worker(model_path: str, data_path: str, model_it: int, theorem_it: int):
         # One task: compute and return identifiers with result
@@ -71,6 +71,7 @@ for model_path, data_path in zip(model_paths, data_paths):
         futures = [ex.submit(_worker, *args) for args in tasks]
         for fut in tqdm(as_completed(futures), total=total, desc=f"Computing main @ {model_path}"):
             m, t, out = fut.result()
+            m, t = str(m), str(t)
             outcomes_by_model[m][t] = out
     
     with open(cache_path, "w") as f:
@@ -87,7 +88,7 @@ if baseline_model_paths:
         data_name = data_path.split("/")[-1]
         cache_path = os.path.join(
             "plots",
-            "fix-" + baseline_model_path.split("/")[-2] + f"_{path_prefix}_{data_name}logprob_outcomes.json"
+            "fix-" + baseline_model_path.split("/")[-2] + f"_{path_prefix}_{data_name}_filtered_logprob_outcomes.json"
         )
 
 
@@ -101,7 +102,7 @@ if baseline_model_paths:
             except Exception:
                 print(f"failed to load baseline cache for {baseline_model_path}")
 
-        outcomes_by_model = {m: {} for m in model_its}
+        outcomes_by_model = {str(m): {} for m in model_its}
 
         def _worker_baseline(model_path: str, data_path: str, model_it: int, theorem_it: int):
             out = compute_logprobs_usefulness_revision(model_path, data_path, model_it, theorem_it)
@@ -114,6 +115,7 @@ if baseline_model_paths:
             futures = [ex.submit(_worker_baseline, *args) for args in tasks]
             for fut in tqdm(as_completed(futures), total=total, desc=f"Computing baseline @ {baseline_model_path}"):
                 m, t, out = fut.result()
+                m, t = str(m), str(t)
                 outcomes_by_model[m][t] = out
 
         with open(cache_path, "w") as f:
